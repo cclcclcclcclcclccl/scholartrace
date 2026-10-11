@@ -7,6 +7,7 @@
 ## 第一阶段实现
 
 - React/TypeScript 前端和 FastAPI 后端，原生 PDF.js 阅读、换页与证据块坐标高亮。
+- 阅读器支持内嵌目录搜索与跳转、75%–200% 相对适合宽度缩放、原生文字选择、按文献保存阅读页码；点击证据自动滚动至出处。
 - 本机 SQLite 文献库与 FTS5/BM25 原文检索，持久保存页码、坐标及版本。
 - 上传 PDF、内容哈希去重；正文标识符/标题与文本相似度辅助识别版本，不依赖文件名。
 - 保存研究笔记及原始引文，用文本对齐基线找到变化，再由本地模型围绕笔记进行语义初判；两侧原文引用均检查存在性。
@@ -23,9 +24,13 @@
 node scripts/start.mjs --open
 ```
 
-访问 `http://127.0.0.1:8765`。启动脚本仅监听本机；若已存在模型权重和推理程序，会同时尝试启动本地模型。日志保存在 `artifacts/runtime/`。本地地址不是赛事要求的公网演示地址。
+访问 `http://127.0.0.1:8765`。若浏览器显示“拒绝连接”，先双击 `启动研证.cmd`，等待浏览器打开；这通常表示本机网页服务未运行。电脑重启后也需要重新双击启动。
 
-结束使用时可双击 `停止研证.cmd`，或运行 `node scripts/stop.mjs`，关闭本项目后台服务和模型。脚本会先核对进程路径，不按进程名称批量结束其他 Python 或模型程序。
+Windows 启动器会创建独立于临时开发命令的后台守护进程，检查并启动网页和本地模型，子进程异常退出后按退避间隔恢复。启动完成后不需要保留终端窗口；未设置系统开机自启。重复启动会复用现有守护进程。网页每 5 秒更新服务状态，断线后自动尝试重连，模型未就绪时可检索原文。
+
+服务仅监听本机。日志保存在 `artifacts/runtime/`，故障时查看 `supervisor.log` 与 `server.error.log`。本地地址不是赛事要求的公网演示地址。休眠或关机期间服务不能访问。
+
+结束使用时可双击 `停止研证.cmd`，或运行 `node scripts/stop.mjs`，关闭本项目后台服务和模型。脚本会先核对进程路径与创建时间，避免误结束被复用 PID 的其他程序。
 
 首次搭建（Python 3.12、Node.js 22+）：
 
@@ -71,9 +76,14 @@ cd frontend
 npm run build
 cd ..
 node scripts/browser_check.mjs
+node scripts/check_reader_quality.mjs
+node scripts/check_recovery.mjs
+node scripts/check_lifecycle.mjs
 ```
 
 浏览器检查脚本目前使用本机已有 Chrome 和 Codex 随附 Playwright；迁移时可通过 `CODEX_BROWSER_MODULE` 指定 Playwright 模块位置。测试过程会在本机文献库保存一条标明“验收样例”的证据笔记。单元/集成测试使用临时数据库，不覆盖正式数据。
+
+`check_reader_quality.mjs` 检查长文目录、缩放、文字选择、刷新后恢复页码、断线重连和过期结果隔离。`check_recovery.mjs` 会实际结束本项目网页进程以验证自动恢复；`check_lifecycle.mjs` 会短暂关闭网页和模型，再验证完整重启。后两者会短暂中断访问，不应与演示同时运行。
 
 ## 真实性、许可与协作
 

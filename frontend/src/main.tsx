@@ -19,11 +19,11 @@ import {
   StickyNote,
   X,
 } from "lucide-react";
-import * as pdfjs from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { Reader } from "./Reader";
+import { readSession, savedPage, rememberPage } from "./session";
+import { useService } from "./useService";
 import "./styles.css";
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 type Document = {
   id: string;
   name: string;
@@ -79,17 +79,29 @@ type Answer = {
   model_answer: { text: string; quote: string; block_id: string }[] | null;
 };
 
-async function api<T>(path: string, body?: unknown): Promise<T> {
+async function api<T>(
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch(
     path,
     body === undefined
-      ? {}
+      ? { signal: signal || AbortSignal.timeout(120000) }
       : {
+          signal: signal || AbortSignal.timeout(120000),
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
-  );
+  ).catch((error: Error) => {
+    if (error.name === "AbortError") throw error;
+    throw new Error(
+      error.name === "TimeoutError"
+        ? "请求等待超时，请稍后重试。"
+        : "本地服务暂时无法连接，请双击启动研证.cmd 后重试。",
+    );
+  });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(
@@ -99,119 +111,6 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
     );
   }
   return response.json();
-}
-
-function Reader({
-  document,
-  page,
-  highlight,
-}: {
-  document: Document;
-  page: number;
-  highlight: Block | null;
-}) {
-  const container = useRef<HTMLDivElement>(null);
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
-  const [width, setWidth] = useState(680);
-  const [dimensions, setDimensions] = useState({ width: 680, height: 880 });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    const node = container.current;
-    if (!node) return;
-    const observer = new ResizeObserver(([entry]) =>
-      setWidth(Math.max(200, Math.min(850, entry.contentRect.width - 52))),
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-  useEffect(() => {
-    setLoading(true);
-    setError("");
-    setPdf(null);
-    const task = pdfjs.getDocument(`/api/documents/${document.id}/pdf`);
-    let cancelled = false;
-    task.promise
-      .then((value) => {
-        if (!cancelled) setPdf(value);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(String(e));
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-      void task.destroy();
-    };
-  }, [document.id]);
-  useEffect(() => {
-    if (!pdf) return;
-    let cancelled = false;
-    let task: pdfjs.RenderTask | undefined;
-    setLoading(true);
-    pdf
-      .getPage(page)
-      .then(async (pdfPage) => {
-        if (cancelled || !canvas.current) return;
-        const base = pdfPage.getViewport({ scale: 1 });
-        const viewport = pdfPage.getViewport({ scale: width / base.width });
-        const ratio = window.devicePixelRatio || 1;
-        canvas.current.width = Math.ceil(viewport.width * ratio);
-        canvas.current.height = Math.ceil(viewport.height * ratio);
-        setDimensions({ width: viewport.width, height: viewport.height });
-        task = pdfPage.render({
-          canvas: canvas.current,
-          viewport,
-          transform: [ratio, 0, 0, ratio, 0, 0],
-        });
-        await task.promise;
-        if (!cancelled) setLoading(false);
-      })
-      .catch((e) => {
-        if (!cancelled && e?.name !== "RenderingCancelledException") {
-          setError(String(e));
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-      task?.cancel();
-    };
-  }, [pdf, page, width]);
-  return (
-    <div className="paper-stage" ref={container}>
-      {loading && (
-        <div className="reader-state">
-          <LoaderCircle className="spin" size={17} />
-          正在呈现原文
-        </div>
-      )}
-      {error && <div className="error-message">PDF 加载失败：{error}</div>}
-      <div className="paper-sheet" style={dimensions}>
-        <canvas ref={canvas} style={dimensions} />
-        {!loading &&
-          highlight?.document_id === document.id &&
-          highlight.page === page && (
-            <div
-              data-testid="source-highlight"
-              className="source-highlight"
-              style={{
-                left: `${(highlight.bbox[0] / highlight.width) * 100}%`,
-                top: `${(highlight.bbox[1] / highlight.height) * 100}%`,
-                width: `${((highlight.bbox[2] - highlight.bbox[0]) / highlight.width) * 100}%`,
-                height: `${((highlight.bbox[3] - highlight.bbox[1]) / highlight.height) * 100}%`,
-              }}
-            >
-              <span>原文证据</span>
-            </div>
-          )}
-      </div>
-      <div className="paper-caption">原始 PDF · 保留论文版式与页码</div>
-    </div>
-  );
 }
 
 function App() {
@@ -227,13 +126,29 @@ function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [auditResults, setAuditResults] = useState<AuditItem[] | null>(null);
   const [targetId, setTargetId] = useState("");
-  const [modelReady, setModelReady] = useState(false);
+  const {
+    status: serviceStatus,
+    modelReady,
+    reconnects,
+    check: checkService,
+  } = useService();
+  const activeRequest = useRef<AbortController | null>(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  function cancelWaiting() {
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    setBusy(false);
+  }
+  function changeView(next: "reader" | "notes" | "audit") {
+    if (next !== view) cancelWaiting();
+    setView(next);
+  }
 
   async function refresh() {
     const [docs, noteList] = await Promise.all([
@@ -245,7 +160,13 @@ function App() {
     setSelected((old) =>
       old
         ? docs.find((d) => d.id === old.id) || old
-        : docs.find((d) => d.arxiv_id === "1706.03762" && d.version === 1) ||
+        : docs.find((d) => d.id === readSession().active) ||
+          docs.find(
+            (d) =>
+              d.arxiv_id === "1706.03762" &&
+              d.version === 1 &&
+              d.status !== "ocr_ready",
+          ) ||
           docs[0] ||
           null,
     );
@@ -258,10 +179,23 @@ function App() {
   }
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
-    api<{ model_available: boolean }>("/api/health")
-      .then((h) => setModelReady(h.model_available))
-      .catch(() => {});
   }, []);
+  useEffect(() => {
+    if (reconnects) {
+      refresh().catch((e) => setError(e.message));
+      setToast("本地服务已恢复连接");
+    }
+  }, [reconnects]);
+  useEffect(() => {
+    if (selected) setPage(savedPage(selected.id, selected.pages));
+  }, [selected?.id]);
+  // Save on explicit navigation; locating evidence also records its page.
+  function navigate(next: number) {
+    if (!selected) return;
+    setPage(next);
+    setHighlight(null);
+    rememberPage(selected.id, next);
+  }
   useEffect(() => {
     if (toast) {
       const timer = setTimeout(() => setToast(""), 3500);
@@ -270,7 +204,11 @@ function App() {
   }, [toast]);
   function selectDocument(doc: Document) {
     setSelected(doc);
-    setPage(1);
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    setBusy(false);
+    setPage(savedPage(doc.id, doc.pages));
+    rememberPage(doc.id, savedPage(doc.id, doc.pages));
     setHighlight(null);
     setAnswer(null);
     setView("reader");
@@ -280,7 +218,8 @@ function App() {
     if (doc) {
       setSelected(doc);
       setPage(block.page);
-      setHighlight(block);
+      rememberPage(doc.id, block.page);
+      setHighlight({ ...block });
       setView("reader");
     }
   }
@@ -297,21 +236,35 @@ function App() {
   }
   async function ask(value = question) {
     if (!selected || !value.trim() || busy) return;
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setQuestion(value);
     setBusy(true);
     setError("");
     setAnswer(null);
     try {
-      const result = await api<Answer>("/api/ask", {
-        question: value,
-        document_ids: [selected.id],
-      });
+      const result = await api<Answer>(
+        "/api/ask",
+        {
+          question: value,
+          document_ids: [selected.id],
+        },
+        AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
+      );
+      if (activeRequest.current !== controller) return;
       setAnswer(result);
       if (result.evidence[0]) locate(result.evidence[0]);
     } catch (e) {
-      setError((e as Error).message);
+      if (
+        activeRequest.current === controller &&
+        (e as Error).name !== "AbortError"
+      )
+        setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (activeRequest.current === controller) {
+        setBusy(false);
+        activeRequest.current = null;
+      }
     }
   }
   async function save(block: Block) {
@@ -329,18 +282,29 @@ function App() {
   }
   async function runAudit() {
     if (!targetId || busy) return;
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setBusy(true);
     setError("");
+    setAuditResults(null);
     try {
       const result = await api<{ results: AuditItem[] }>(
         "/api/versions/audit",
         { target_document_id: targetId },
+        AbortSignal.any([controller.signal, AbortSignal.timeout(300000)]),
       );
-      setAuditResults(result.results);
+      if (activeRequest.current === controller) setAuditResults(result.results);
     } catch (e) {
-      setError((e as Error).message);
+      if (
+        activeRequest.current === controller &&
+        (e as Error).name !== "AbortError"
+      )
+        setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (activeRequest.current === controller) {
+        setBusy(false);
+        activeRequest.current = null;
+      }
     }
   }
   async function upload(files: FileList | null) {
@@ -391,21 +355,21 @@ function App() {
         <nav className="nav-list">
           <button
             className={view === "reader" ? "active" : ""}
-            onClick={() => setView("reader")}
+            onClick={() => changeView("reader")}
           >
             <BookOpen size={17} />
             文献阅读台<span>{documents.length}</span>
           </button>
           <button
             className={view === "notes" ? "active" : ""}
-            onClick={() => setView("notes")}
+            onClick={() => changeView("notes")}
           >
             <StickyNote size={17} />
             证据笔记<span>{notes.length}</span>
           </button>
           <button
             className={view === "audit" ? "active" : ""}
-            onClick={() => setView("audit")}
+            onClick={() => changeView("audit")}
           >
             <GitCompareArrows size={17} />
             版本复核
@@ -482,7 +446,13 @@ function App() {
           <div className="header-actions">
             <span className={`model-state ${modelReady ? "ready" : ""}`}>
               <i />
-              {modelReady ? "本地模型已连接" : "原文检索模式"}
+              {serviceStatus === "offline"
+                ? "本地服务未连接"
+                : serviceStatus === "checking"
+                  ? "正在连接"
+                  : modelReady
+                    ? "本地模型已连接"
+                    : "模型未就绪 · 可检索原文"}
             </span>
             <button
               className="primary-button"
@@ -506,6 +476,17 @@ function App() {
           hidden
           onChange={(e) => upload(e.target.files)}
         />
+        {serviceStatus === "offline" && (
+          <div className="connection-banner" role="status">
+            <div>
+              <strong>本地服务暂时断开，正在自动重连</strong>
+              <p>
+                若持续无法恢复，请双击项目文件夹中的「启动研证.cmd」。输入内容会保留在当前页面。
+              </p>
+            </div>
+            <button onClick={() => void checkService()}>立即重试</button>
+          </div>
+        )}
         {error && (
           <div role="alert" className="error-banner">
             {error}
@@ -589,8 +570,7 @@ function App() {
                           aria-label="上一页"
                           disabled={page <= 1}
                           onClick={() => {
-                            setPage((p) => p - 1);
-                            setHighlight(null);
+                            navigate(page - 1);
                           }}
                         >
                           <ArrowLeft size={15} />
@@ -605,8 +585,7 @@ function App() {
                             onChange={(e) => {
                               const next = Number(e.target.value);
                               if (next >= 1 && next <= selected.pages) {
-                                setPage(next);
-                                setHighlight(null);
+                                navigate(next);
                               }
                             }}
                           />
@@ -616,8 +595,7 @@ function App() {
                           aria-label="下一页"
                           disabled={page >= selected.pages}
                           onClick={() => {
-                            setPage((p) => p + 1);
-                            setHighlight(null);
+                            navigate(page + 1);
                           }}
                         >
                           <ArrowRight size={15} />
@@ -629,6 +607,8 @@ function App() {
                       document={selected}
                       page={page}
                       highlight={highlight}
+                      onPage={navigate}
+                      reloadKey={reconnects}
                     />
                   </>
                 ) : (
@@ -671,7 +651,12 @@ function App() {
                     <button
                       aria-label="查找证据"
                       type="submit"
-                      disabled={busy || !selected || !question.trim()}
+                      disabled={
+                        busy ||
+                        !selected ||
+                        !question.trim() ||
+                        serviceStatus !== "online"
+                      }
                     >
                       {busy ? (
                         <LoaderCircle size={17} className="spin" />
@@ -714,7 +699,19 @@ function App() {
                 {busy && (
                   <div className="working">
                     <LoaderCircle className="spin" size={20} />
-                    <span>正在检索文献并检查本地生成服务…</span>
+                    <span>正在检索原文并核对回答出处…</span>
+                    {activeRequest.current && (
+                      <button
+                        className="text-button"
+                        onClick={() => {
+                          activeRequest.current?.abort();
+                          activeRequest.current = null;
+                          setBusy(false);
+                        }}
+                      >
+                        停止等待
+                      </button>
+                    )}
                   </div>
                 )}
                 {answer && (
@@ -730,6 +727,9 @@ function App() {
                     {answer.model_answer?.map((claim, i) => (
                       <div className="claim-card" key={i}>
                         <p>{claim.text}</p>
+                        <blockquote className="claim-quote">
+                          {claim.quote}
+                        </blockquote>
                         <button
                           onClick={() => {
                             const block = answer.evidence.find(
@@ -865,7 +865,11 @@ function App() {
                 <select
                   id="audit-target"
                   value={targetId}
-                  onChange={(e) => setTargetId(e.target.value)}
+                  onChange={(e) => {
+                    cancelWaiting();
+                    setTargetId(e.target.value);
+                    setAuditResults(null);
+                  }}
                 >
                   <option value="">选择目标论文</option>
                   {documents
@@ -890,6 +894,11 @@ function App() {
                 )}
                 检查证据变化
               </button>
+              {busy && (
+                <button className="text-button" onClick={cancelWaiting}>
+                  停止等待
+                </button>
+              )}
             </div>
             <div className="audit-method">
               <ShieldCheck size={17} />

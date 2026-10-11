@@ -53,7 +53,7 @@ async def health():
             available = response.status_code == 200
     except httpx.HTTPError:
         pass
-    return {"status": "ok", "model_available": available, "model_url": MODEL_URL,
+    return {"status": "ok", "service": "scholartrace", "model_available": available, "model_url": MODEL_URL,
             "retrieval": "SQLite FTS5/BM25 lexical baseline", "version": "0.1.0"}
 
 
