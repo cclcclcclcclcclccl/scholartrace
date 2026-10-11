@@ -58,7 +58,11 @@ def initialize() -> None:
 
 
 def normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text)).strip()
+    text = unicodedata.normalize("NFKC", text)
+    # PDF line wrapping often splits repository URLs immediately after a slash.
+    # Preserve numeric/ordinary whitespace instead of removing all whitespace.
+    text = re.sub(r"(https?://[^\s]*?/)[ \t]*\n[ \t]*(?=[A-Za-z0-9])", r"\1", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def document_title(doc: pymupdf.Document) -> str:

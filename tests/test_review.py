@@ -5,7 +5,7 @@ from backend.review import review_change
 
 def run_response(value):
     item = {"status": "review_required", "note": {"note": "Code availability", "quote": "We intend to make the code available soon."},
-            "candidate": {"text": "Our code is available at https://example.org/research."}}
+            "candidate": {"text": "Our code is available at https://example.org/\nresearch."}}
     async def execute():
         transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": [{"message": {"content": __import__('json').dumps(value)}}]}))
         async with httpx.AsyncClient(transport=transport) as client:
@@ -23,3 +23,10 @@ def test_semantic_review_retains_both_real_quotes():
     assert result["status"] == "model_assessment"
     assert result["source_quotes_verified"] is True
     assert result["decision"] == "claim_changed"
+
+
+def test_review_accepts_pdf_wrapped_url_without_changing_numbers():
+    result = run_response({"decision": "claim_changed", "reason": "从计划发布变为已发布", "old_quote": "make the code available soon", "new_quote": "Our code is available at https://example.org/research."})
+    assert result["status"] == "model_assessment"
+    from backend.store import normalize
+    assert normalize("1 2") != normalize("12")

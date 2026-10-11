@@ -13,7 +13,7 @@ newer = next(d for d in docs if d["name"] == "1706.03762v7.pdf")
 cases = [("gpu", first, "训练用了哪些 GPU？"),
          ("optimizer", first, "Adam optimizer 的 beta1 和 beta2 分别是多少？"),
          ("unanswerable", first, "每张 NVIDIA P100 GPU 的采购价格是多少美元？"),
-         ("scan_gpu", scan, "训练用了哪些 GPU？")]
+         ("scan_gpu", scan, "Base 模型训练用了多少个 GPU？具体是什么型号？")]
 results = []
 for label, doc, question in cases:
     start = perf_counter()
