@@ -477,6 +477,62 @@ h1 {
 .page-toolbar input::-webkit-inner-spin-button {
   display: none;
 }
+.page-jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+.page-toolbar .page-jump input {
+  width: 46px;
+  font-size: 12px;
+}
+.page-toolbar .page-jump-button {
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: #eaf1e5;
+  color: #285540;
+  font-size: 11px;
+}
+.page-jump-error {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: 210px;
+  padding: 9px;
+  border: 1px solid #e2bf98;
+  border-radius: 5px;
+  background: #fff5e7;
+  color: #875329;
+  font-size: 12px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.enter-preference select {
+  color: #4a6554;
+  background: #f2f6ee;
+  border: 1px solid #dbe5d5;
+  padding: 5px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.keyboard-hint {
+  margin: 8px 20px 0;
+  color: #65735f;
+  font-size: 10px;
+  line-height: 1.6;
+}
 .page-format {
   font-size: 9px;
   color: #a0aa99;

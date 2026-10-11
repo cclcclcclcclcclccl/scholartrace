@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   BookOpen,
   Check,
+  CircleHelp,
   ChevronRight,
   FileText,
   GitCompareArrows,
@@ -22,6 +23,16 @@ import {
 import { Reader } from "./Reader";
 import { readSession, savedPage, rememberPage } from "./session";
 import { useService } from "./useService";
+import { PageJump } from "./PageJump";
+import {
+  readEnterBehavior,
+  saveEnterBehavior,
+  shouldShowTutorial,
+  markTutorialSeen,
+  type EnterBehavior,
+} from "./preferences";
+import { HelpButton, HelpDialog } from "./HelpDialog";
+import type { HelpTopic } from "./helpContent";
 import "./styles.css";
 
 type Document = {
@@ -119,6 +130,8 @@ function App() {
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState("");
   const [question, setQuestion] = useState("");
+  const [enterBehavior, setEnterBehavior] = useState(readEnterBehavior);
+  const composing = useRef(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [busy, setBusy] = useState(false);
   const [highlight, setHighlight] = useState<Block | null>(null);
@@ -139,6 +152,19 @@ function App() {
   const [noteText, setNoteText] = useState("");
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [help, setHelp] = useState<{
+    topic: HelpTopic;
+    tutorial: boolean;
+  } | null>(() =>
+    shouldShowTutorial() ? { topic: "overview", tutorial: true } : null,
+  );
+  function openHelp(topic: HelpTopic) {
+    setHelp({ topic, tutorial: false });
+  }
+  function closeHelp() {
+    if (help?.tutorial) markTutorialSeen();
+    setHelp(null);
+  }
 
   function cancelWaiting() {
     activeRequest.current?.abort();
@@ -235,7 +261,14 @@ function App() {
     }
   }
   async function ask(value = question) {
-    if (!selected || !value.trim() || busy) return;
+    if (
+      !selected ||
+      !value.trim() ||
+      busy ||
+      activeRequest.current ||
+      serviceStatus !== "online"
+    )
+      return;
     const controller = new AbortController();
     activeRequest.current = controller;
     setQuestion(value);
@@ -377,13 +410,16 @@ function App() {
         </nav>
         <div className="library-heading">
           <span>文献库</span>
-          <button
-            title="导入 PDF"
-            className="icon-button"
-            onClick={() => fileInput.current?.click()}
-          >
-            <Plus size={17} />
-          </button>
+          <div>
+            <HelpButton topic="library" onOpen={openHelp} />
+            <button
+              title="导入 PDF"
+              className="icon-button"
+              onClick={() => fileInput.current?.click()}
+            >
+              <Plus size={17} />
+            </button>
+          </div>
         </div>
         <label className="library-search">
           <Search size={14} />
@@ -444,6 +480,14 @@ function App() {
             </strong>
           </div>
           <div className="header-actions">
+            <button
+              type="button"
+              className="header-tutorial"
+              onClick={() => setHelp({ topic: "overview", tutorial: true })}
+            >
+              <CircleHelp size={16} />
+              使用教程
+            </button>
             <span className={`model-state ${modelReady ? "ready" : ""}`}>
               <i />
               {serviceStatus === "offline"
@@ -564,7 +608,10 @@ function App() {
                 {selected ? (
                   <>
                     <div className="page-toolbar">
-                      <span>原文阅读</span>
+                      <div className="module-heading">
+                        <span>原文阅读</span>
+                        <HelpButton topic="reader" onOpen={openHelp} />
+                      </div>
                       <div>
                         <button
                           aria-label="上一页"
@@ -575,22 +622,12 @@ function App() {
                         >
                           <ArrowLeft size={15} />
                         </button>
-                        <label>
-                          <input
-                            aria-label="当前页码"
-                            type="number"
-                            min={1}
-                            max={selected.pages}
-                            value={page}
-                            onChange={(e) => {
-                              const next = Number(e.target.value);
-                              if (next >= 1 && next <= selected.pages) {
-                                navigate(next);
-                              }
-                            }}
-                          />
-                          <span>/ {selected.pages}</span>
-                        </label>
+                        <PageJump
+                          page={page}
+                          total={selected.pages}
+                          documentId={selected.id}
+                          onJump={navigate}
+                        />
                         <button
                           aria-label="下一页"
                           disabled={page >= selected.pages}
@@ -631,6 +668,7 @@ function App() {
                       {selected?.version ? ` · v${selected.version}` : ""}
                     </p>
                   </div>
+                  <HelpButton topic="ask" onOpen={openHelp} />
                 </div>
                 <form
                   className="question-box"
@@ -643,11 +681,50 @@ function App() {
                     aria-label="研究问题"
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
+                    onCompositionStart={() => {
+                      composing.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      composing.current = false;
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key !== "Enter" ||
+                        composing.current ||
+                        event.nativeEvent.isComposing ||
+                        event.nativeEvent.keyCode === 229
+                      )
+                        return;
+                      const send =
+                        !event.altKey &&
+                        (event.ctrlKey ||
+                          event.metaKey ||
+                          (enterBehavior === "send" && !event.shiftKey));
+                      if (send) {
+                        event.preventDefault();
+                        if (!event.repeat)
+                          event.currentTarget.form?.requestSubmit();
+                      }
+                    }}
                     placeholder="例如：模型训练用了哪些 GPU？"
                     rows={3}
                   />
                   <div>
-                    <span>回答有据可查</span>
+                    <label className="enter-preference">
+                      <span className="sr-only">回车键行为</span>
+                      <select
+                        aria-label="回车键行为"
+                        value={enterBehavior}
+                        onChange={(event) => {
+                          const value = event.target.value as EnterBehavior;
+                          setEnterBehavior(value);
+                          saveEnterBehavior(value);
+                        }}
+                      >
+                        <option value="send">Enter 发送</option>
+                        <option value="newline">Enter 换行</option>
+                      </select>
+                    </label>
                     <button
                       aria-label="查找证据"
                       type="submit"
@@ -666,6 +743,11 @@ function App() {
                     </button>
                   </div>
                 </form>
+                <p className="keyboard-hint">
+                  {enterBehavior === "send"
+                    ? "Enter 发送 · Shift + Enter 换行"
+                    : "Enter 换行 · Ctrl / ⌘ + Enter 发送"}
+                </p>
                 {!answer && !busy && (
                   <>
                     <div className="suggestion-label">从这些问题开始</div>
@@ -812,7 +894,10 @@ function App() {
         {view === "notes" && (
           <section className="workspace-page">
             <div className="eyebrow">YOUR EVIDENCE, PRESERVED.</div>
-            <h1>证据笔记</h1>
+            <div className="module-heading">
+              <h1>证据笔记</h1>
+              <HelpButton topic="notes" onOpen={openHelp} />
+            </div>
             <p className="page-description">
               保存研究观察及其原始出处。论文更新后，历史证据仍然保留。
             </p>
@@ -855,7 +940,10 @@ function App() {
         {view === "audit" && (
           <section className="workspace-page">
             <div className="eyebrow">WHEN PAPERS CHANGE.</div>
-            <h1>论文更新了，依据还成立吗？</h1>
+            <div className="module-heading">
+              <h1>论文更新了，依据还成立吗？</h1>
+              <HelpButton topic="audit" onOpen={openHelp} label="怎么用" />
+            </div>
             <p className="page-description">
               将已有证据笔记与另一个版本对照，找出需要重新阅读的原文。变化提示不等于结论被推翻。
             </p>
@@ -997,6 +1085,15 @@ function App() {
           </section>
         )}
       </main>
+      {help && (
+        <HelpDialog
+          key={`${help.tutorial}-${help.topic}`}
+          initialTopic={help.topic}
+          tutorial={help.tutorial}
+          onClose={closeHelp}
+          onNavigate={changeView}
+        />
+      )}
     </div>
   );
 }

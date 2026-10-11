@@ -11,6 +11,7 @@ const failedRequests = [];
 page.on('pageerror', error => errors.push(String(error)));
 page.on('requestfailed', request => { if (!request.failure()?.errorText.includes('ERR_ABORTED')) failedRequests.push({ url: request.url(), failure: request.failure() }); });
 await page.goto('http://127.0.0.1:8765', { waitUntil: 'domcontentloaded' });
+await page.getByRole('dialog').getByRole('button', { name: '稍后再看', exact: true }).click();
 await page.getByRole('heading', { name: '让每个结论，回到证据。' }).waitFor();
 await page.waitForFunction(() => document.querySelector('canvas')?.width > 200 && !document.querySelector('.reader-state'));
 await page.screenshot({ path: 'artifacts/browser/01-workbench.png', fullPage: true });

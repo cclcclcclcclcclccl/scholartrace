@@ -8,6 +8,8 @@
 
 - React/TypeScript 前端和 FastAPI 后端，原生 PDF.js 阅读、换页与证据块坐标高亮。
 - 阅读器支持内嵌目录搜索与跳转、75%–200% 相对适合宽度缩放、原生文字选择、按文献保存阅读页码；点击证据自动滚动至出处。
+- 页码可删空编辑，Enter／跳转按钮／失焦后确认；提问默认 Enter 发送、Shift+Enter 换行，可切换 Enter 换行并保存偏好。
+- 首次访问弹出四步教程，顶部可重新打开；文献库、阅读器、问答、笔记及版本复核提供独立帮助入口与真实操作示例。
 - 本机 SQLite 文献库与 FTS5/BM25 原文检索，持久保存页码、坐标及版本。
 - 上传 PDF、内容哈希去重；正文标识符/标题与文本相似度辅助识别版本，不依赖文件名。
 - 保存研究笔记及原始引文，用文本对齐基线找到变化，再由本地模型围绕笔记进行语义初判；两侧原文引用均检查存在性。
@@ -77,6 +79,7 @@ npm run build
 cd ..
 node scripts/browser_check.mjs
 node scripts/check_reader_quality.mjs
+node scripts/check_usability.mjs
 node scripts/check_recovery.mjs
 node scripts/check_lifecycle.mjs
 ```
@@ -84,6 +87,8 @@ node scripts/check_lifecycle.mjs
 浏览器检查脚本目前使用本机已有 Chrome 和 Codex 随附 Playwright；迁移时可通过 `CODEX_BROWSER_MODULE` 指定 Playwright 模块位置。测试过程会在本机文献库保存一条标明“验收样例”的证据笔记。单元/集成测试使用临时数据库，不覆盖正式数据。
 
 `check_reader_quality.mjs` 检查长文目录、缩放、文字选择、刷新后恢复页码、断线重连和过期结果隔离。`check_recovery.mjs` 会实际结束本项目网页进程以验证自动恢复；`check_lifecycle.mjs` 会短暂关闭网页和模型，再验证完整重启。后两者会短暂中断访问，不应与演示同时运行。
+
+`check_usability.mjs` 用键盘选中、Backspace 删除和逐字符输入复现页码编辑问题；检查 Enter 发送、换行模式、偏好保存、输入法组合事件防误发、首次教程、五个帮助入口以及手机布局。包含一次真实本地模型问答；其余键盘请求使用明确的测试响应隔离推理耗时。测试使用独立浏览器上下文，不改变用户浏览器中的教程或快捷键设置。
 
 ## 真实性、许可与协作
 

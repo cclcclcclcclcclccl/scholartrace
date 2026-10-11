@@ -20,6 +20,7 @@ const results = {};
 await mkdir('artifacts/browser-quality', { recursive: true });
 try {
   await page.goto('http://127.0.0.1:8765');
+  await page.getByRole('dialog').getByRole('button', { name: '稍后再看', exact: true }).click();
   await ready();
   // Selection uses the rendered text layer, not hidden API text.
   results.text_selection = await page.locator('.textLayer').evaluate(layer => {
@@ -75,6 +76,7 @@ try {
   await ready();
   assert.equal(Number(await page.getByRole('spinbutton', { name: '当前页码' }).inputValue()), chapterPage);
   await page.getByRole('spinbutton', { name: '当前页码' }).fill('540');
+  await page.getByRole('spinbutton', { name: '当前页码' }).press('Enter');
   await ready();
   await page.reload();
   await ready();
