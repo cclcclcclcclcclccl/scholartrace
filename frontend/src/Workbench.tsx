@@ -1,3 +1,11 @@
+import {
+  ProposalRevision,
+  ProtocolEditor,
+  MeasurementLab,
+  MeasurementResult,
+  type MeasurementContent,
+  type ProtocolContent,
+} from "./ExperimentLab";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BookOpen,
@@ -1711,6 +1719,8 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
           </div>
         </details>
       </div>
+      <ProtocolEditor documents={ids} />
+      <MeasurementLab />
       <div className="work-card">
         <h3>架构与流程图</h3>
         <p>使用上方研究目标生成模块和连线，生成后可继续编辑脚本。</p>
@@ -2058,6 +2068,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
                       track: "主题追踪",
                       review: "证据综述",
                       writing: "写作方案",
+                      refine_plan: "方案复核修订",
                       matrix: "证据比较矩阵",
                       future: "未来工作",
                       agent: "Agent 研究",
@@ -2149,7 +2160,13 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
                 )
               }
             >
-              <span>{a.kind}</span>
+              <span>
+                {{
+                  protocol: "实验设计",
+                  measurements: "实验统计",
+                  matrix: "证据矩阵",
+                }[a.kind] || a.kind}
+              </span>
               {a.title}
             </button>
           ))}
@@ -2241,6 +2258,31 @@ function Artifact({
             <p key={i}>• {check}</p>
           ))}
         </section>
+      )}
+      {proposal && (
+        <ProposalRevision
+          key={`revision-${result.id}`}
+          identifier={result.id}
+          audit={
+            c.revision_audit as Parameters<typeof ProposalRevision>[0]["audit"]
+          }
+        />
+      )}
+      {proposal && (
+        <ProtocolEditor key={`protocol-from-${result.id}`} source={result.id} />
+      )}
+      {result.kind === "protocol" && (
+        <ProtocolEditor
+          key={`${result.id}-${c.revision}`}
+          identifier={result.id}
+          content={c as ProtocolContent}
+        />
+      )}
+      {result.kind === "measurements" && (
+        <MeasurementResult
+          identifier={result.id}
+          content={c as MeasurementContent}
+        />
       )}
       {proposal &&
         Object.entries(proposal).map(([k, v]) => (

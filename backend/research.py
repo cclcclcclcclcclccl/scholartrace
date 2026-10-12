@@ -31,13 +31,10 @@ def artifact(identifier):
     if row["kind"] == "writing" and content.get("proposal"):
         from .proposal_checks import assess_plan
 
-        content["plan_checks"] = list(
-            dict.fromkeys(
-                content.get("plan_checks", []) + assess_plan(content["proposal"])
-            )
-        )
+        content["historical_plan_checks"] = content.get("plan_checks", [])
+        content["plan_checks"] = assess_plan(content["proposal"])
         content["plan_checks_notice"] = (
-            "按当前规则补充检查；原稿与历史数据未改写，未列出风险也不代表方案可执行。"
+            "按当前规则重新检查；生成时的意见保存在 historical_plan_checks，原稿与历史数据未改写，未列出风险也不代表方案可执行。"
         )
     return {**dict(row), "content": content}
 
@@ -453,7 +450,7 @@ async def grounded(question, ids, ctx=None, limit=10, scoped=False):
             index = int(claim["evidence_id"][1:]) - 1
             if 0 <= index < len(blocks):
                 claim["quote"] = blocks[index]["text"]
-    claims = valid_claims(result, blocks)[:5]
+    claims = valid_claims(result, blocks)[:8]
     if claims:
         if ctx:
             ctx.log("校验论断是否被所引原句直接支持", {"claims": len(claims)})
@@ -532,6 +529,9 @@ async def grounded(question, ids, ctx=None, limit=10, scoped=False):
             for i, claim in enumerate(claims)
             if i in accepted
         ]
+    from .claim_checks import prune_repeated_facts
+
+    claims = prune_repeated_facts(claims)
     return {
         "claims": claims,
         "comparison": [],
@@ -817,6 +817,27 @@ def export_markdown(item):
         parts += ["## 执行实验前必须补齐"] + [
             "- " + issue for issue in content["plan_checks"]
         ]
+    if item["kind"] == "protocol":
+        parts += ["## 实验设计卡 · 修订 " + str(content["revision"])]
+        parts += [f"- {k}: {v}" for k, v in content["protocol"].items()]
+        parts += ["## 待核对"] + ["- " + warning for warning in content["checks"]]
+    if item["kind"] == "measurements":
+        spec = content["spec"]
+        parts += [
+            "## 重复实验统计",
+            f"指标：{spec['metric']}；单位：{spec['unit']}；误差棒：{spec['interval']}；数据类型：{spec['data_label']}",
+            "原始 CSV SHA-256：" + content["source_sha256"],
+        ]
+        parts += [
+            f"- {r['group']}: n={r['n']}, mean={r['mean']:.8g}, SD={r['sd']:.8g}, 95% t CI=[{r['ci95_low']:.8g}, {r['ci95_high']:.8g}]"
+            for r in content["summary"]
+        ]
+        parts += ["## 解释边界"] + ["- " + warning for warning in content["warnings"]]
+        if content.get("protocol_snapshot"):
+            parts += [
+                "## 关联实验设计修订",
+                json.dumps(content["protocol_snapshot"], ensure_ascii=False, indent=2),
+            ]
     refs = {}
     for section in content.get("sections", []):
         parts += ["## " + section["title"]]

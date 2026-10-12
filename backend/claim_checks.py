@@ -46,3 +46,78 @@ def duplicate_claim(text, block_id, accepted):
         ):
             return True
     return False
+
+
+def prune_repeated_facts(claims):
+    """Drop only narrow numeric restatements from the same evidence and named variant.
+
+    Richer experimental conditions and different model names are never collapsed.
+    This deliberately handles simple architecture restatements, not arbitrary prose.
+    """
+    aliases = [
+        ("layers", r"层数|层"),
+        ("hidden", r"隐藏(?:状态)?(?:维度|大小)|隐藏层维度"),
+        ("heads", r"注意力头(?:数|数量)?"),
+    ]
+
+    def facts(text):
+        output = set()
+        for key, names in aliases:
+            for m in re.finditer(
+                rf"(?:{names})(?:分别)?(?:是|为|有|：|:)?\s*(\d[\d,]*)", text
+            ):
+                output.add((key, m[1].replace(",", "")))
+            if key == "layers":
+                output.update((key, m[1]) for m in re.finditer(r"(\d+)\s*层", text))
+        return output
+
+    def entities(text):
+        return set(re.findall(r"[A-Za-z][A-Za-z0-9_-]*", text.lower())) - {
+            "transformer",
+            "only",
+            "decoder",
+            "decoder-only",
+            "encoder",
+            "encoder-only",
+        }
+
+    def simple(text):
+        value = re.sub(r"本论文的|该模型的|模型的|本模型的", "", text)
+        value = re.sub(r"[A-Za-z][A-Za-z0-9_-]*", "", value)
+        for _, names in aliases:
+            value = re.sub(names, "", value)
+        value = re.sub(
+            r"分别|是|为|有|个|和|以及|且|的|\d|[\s,，。；;：:、-]", "", value
+        )
+        return not value
+
+    def roles(value):
+        return set(re.findall(r"encoder|decoder", value.lower()))
+
+    result = []
+    for i, claim in enumerate(claims):
+        own = facts(claim["text"])
+        redundant = False
+        if own and simple(claim["text"]):
+            for j, other in enumerate(claims):
+                if i == j or claim["block_id"] != other["block_id"]:
+                    continue
+                if entities(claim["text"]) != entities(other["text"]):
+                    continue
+                if roles(claim["text"]) and roles(claim["text"]) != roles(
+                    other["text"]
+                ):
+                    continue
+                if re.search(
+                    r"不|未|没有|假设|若|如果|训练|推理|编码器|解码器", claim["text"]
+                ):
+                    continue
+                if re.search(r"不|未|没有|假设|若|如果|训练时|推理时", other["text"]):
+                    continue
+                other_facts = facts(other["text"])
+                if own < other_facts or (own == other_facts and j < i):
+                    redundant = True
+                    break
+        if not redundant:
+            result.append(claim)
+    return result

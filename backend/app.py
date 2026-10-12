@@ -27,6 +27,8 @@ from . import (
     features,
     research,
     workspace_tools,
+    experiments,
+    proposal_revision,
 )
 from .review import review_change
 
@@ -68,6 +70,7 @@ app.middleware("http")(accounts.scope)
 app.include_router(accounts.router)
 app.include_router(features.router)
 app.include_router(workspace_tools.router)
+app.include_router(experiments.router)
 
 
 @app.exception_handler(KeyError)

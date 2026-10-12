@@ -784,3 +784,40 @@
   border-top: 1px solid #dce4df;
   padding-top: 8px;
 }
+
+.protocol-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.protocol-fields label {
+  display: grid;
+  gap: 6px;
+  color: #304b40;
+  font-size: 13px;
+}
+.protocol-history {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+}
+.measurement-result img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 14px 0;
+}
+.measurement-result .evidence-matrix td,
+.measurement-result .evidence-matrix th {
+  min-width: 100px;
+}
+.data-fingerprint {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .protocol-fields {
+    grid-template-columns: 1fr;
+  }
+}

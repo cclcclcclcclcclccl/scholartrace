@@ -3,6 +3,19 @@
 import re
 
 
+def fixed_attention_dimensions(text):
+    """Flag positive instructions fixing both dimensions, not warnings against doing so."""
+    fixed_model = fixed_head = False
+    for clause in re.split(r"[，。；;\n]", text):
+        if not re.search(r"固定|不变", clause) or re.search(
+            r"不能|不得|不要|不可|不应|不再|无需|不固定|并非固定", clause
+        ):
+            continue
+        fixed_model |= bool(re.search(r"\bd_?model\b", clause, re.IGNORECASE))
+        fixed_head |= bool(re.search(r"\bd_?(?:k|v|head)\b", clause, re.IGNORECASE))
+    return fixed_model and fixed_head
+
+
 def assess_plan(fields):
     text = "\n".join(fields.values())
     evaluation = fields.get("evaluation_plan", "")
@@ -29,18 +42,20 @@ def assess_plan(fields):
         issues.append(
             "GLUE 候选任务与 BLEU 可能不匹配；逐项核对所选任务的官方指标，不能直接沿用翻译论文指标。"
         )
-    if (
-        re.search(r"注意力头", text)
-        and re.search(r"dmodel|d_model", text, re.IGNORECASE)
-        and re.search(r"dk|dv|d_k|d_v", text, re.IGNORECASE)
-        and re.search(r"不变|固定", text)
-    ):
+    if re.search(r"注意力头", text) and fixed_attention_dimensions(text):
         issues.append(
             "检查注意力维度约束：标准多头注意力通常要求 d_model = h × d_head；不能在同时固定 d_model、d_k、d_v 时任意改变头数。先验证实现、整除条件和投影形状。"
         )
-    if re.search(r"预训练", text) and re.search(
-        r"调整注意力头|改变.*头数|注意力头数量", text
-    ):
+    planned = fields.get("method_plan", "") + "\n" + evaluation
+    pretrained_use = any(
+        "预训练" in clause
+        and not re.search(
+            r"不(?:使用|涉及|依赖|修改)|不能|不得|不要|不可|不应|不外推|不能外推|不自动外推|无需|避免",
+            clause,
+        )
+        for clause in re.split(r"[。；;\n]", planned)
+    )
+    if pretrained_use and re.search(r"调整注意力头|改变.*头数|注意力头数量", planned):
         issues.append(
             "改变预训练模型头数不能只修改配置文件：需明确权重如何重组、是否重新训练，以及比较是否保持相同训练条件。先运行最小形状与前向检查。"
         )
@@ -56,5 +71,28 @@ def assess_plan(fields):
     ):
         issues.append(
             "若使用显著性表述，需预先确定统计检验、重复运行及不确定性报告；不能凭均值变化宣称显著。"
+        )
+    if not re.search(r"(?:种子|seeds?)[^\n。]{0,40}\d", planned, re.IGNORECASE):
+        issues.append(
+            "明确独立完整运行的随机种子和次数（例如拟议 11、23、47），不能把同次训练的 batch 当作独立重复。"
+        )
+    if re.search(r"从零|从头|训练模型|模型训练", planned) and not re.search(
+        r"\d+\s*(?:步|轮|epochs?|steps?)|(?:epoch|step)[^\n。]{0,15}\d",
+        planned,
+        re.IGNORECASE,
+    ):
+        issues.append(
+            "填写各对照组相同的训练步数或轮数、优化器与批大小；先实测试跑预算，未指定训练量无法公平复现。"
+        )
+    if (
+        re.search(r"失败|异常", planned)
+        and re.search(r"重复运行|重试", planned)
+        and not re.search(
+            r"保留.{0,8}(?:失败|异常)|记录.{0,8}(?:失败|异常)|(?:失败|异常).{0,8}(?:记录|保留)",
+            planned,
+        )
+    ):
+        issues.append(
+            "失败重跑必须保留失败原因、次数及原始日志，区分无效运行和有效负结果，不能只选成功重跑结果。"
         )
     return issues

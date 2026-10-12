@@ -103,6 +103,7 @@ class TaskPayload(BaseModel):
     query: str = Field(default="", max_length=500)
     language: Literal["zh", "en"] = "zh"
     page: int | None = Field(default=None, ge=1)
+    artifact_id: str | None = None
     paper_id: str | None = None
     tracker_id: str | None = None
     bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
@@ -126,6 +127,7 @@ class TaskRequest(BaseModel):
         "formula",
         "table",
         "matrix",
+        "refine_plan",
     ]
     payload: TaskPayload
 
@@ -133,6 +135,12 @@ class TaskRequest(BaseModel):
 @router.post("/jobs")
 async def create_job(body: TaskRequest):
     payload = body.payload.model_dump(exclude_none=True)
+    if body.kind == "refine_plan":
+        if (
+            not payload.get("artifact_id")
+            or research.artifact(payload["artifact_id"])["kind"] != "writing"
+        ):
+            raise ValueError("请选择一份研究方案")
     if body.kind == "matrix" and (
         not 1 <= len(payload["document_ids"]) <= 6
         or not payload["fields"]
