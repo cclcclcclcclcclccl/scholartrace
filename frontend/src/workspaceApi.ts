@@ -6,6 +6,7 @@ export type Paper = {
   status: string;
   version: number | null;
   arxiv_id?: string | null;
+  aliases?: string[];
 };
 export type Anchor = {
   id?: string;

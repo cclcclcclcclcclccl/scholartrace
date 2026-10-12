@@ -3,6 +3,7 @@
 import asyncio
 from collections import defaultdict
 import threading
+import re
 import numpy as np
 from . import store, jobs
 
@@ -126,14 +127,22 @@ def search(question, document_ids=None, limit=10):
         semantic = dense(question, ids)
     scores = defaultdict(float)
     blocks = {}
-    for weight, ranked in [(1, lexical), (1, semantic)]:
+    for weight, ranked in [(1.8, lexical), (1, semantic)]:
         for rank, block in enumerate(ranked):
             blocks.setdefault(block["id"], {}).update(block)
             scores[block["id"]] += weight / (40 + rank)
     terms = store.query_terms(question)
     for identifier, block in blocks.items():
-        explicit = sum(t.lower() in block["text"].lower() for t in terms if t.isascii())
-        scores[identifier] += min(explicit, 6) * 0.0005
+        normalized = store.quote_normalize(block["text"]).lower()
+        explicit = sum(
+            bool(re.search(r"\b" + re.escape(t.lower()) + r"s?\b", normalized))
+            for t in terms
+            if t.isascii()
+        )
+        # Dense retrieval over isolated labels often ranks a one-word 'Context'
+        # above a paragraph containing the actual context-window specification.
+        # Reward coverage of several requested terms, rather than double hits alone.
+        scores[identifier] += min(explicit, 8) * 0.006
         block["retrieval_score"] = round(scores[identifier], 6)
     ranked = sorted(blocks.values(), key=lambda b: scores[b["id"]], reverse=True)
     if len(ids) > 1:

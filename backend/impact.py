@@ -2,17 +2,27 @@
 
 import asyncio
 import json
-import re
 from difflib import SequenceMatcher
 import httpx
 from . import store, jobs, research, audit, model
 from .review import review_change
+from .alignment import SourceAligner, EXPLANATIONS
 
 
 def claims_in(value):
     if isinstance(value, dict):
         if all(k in value for k in ["block_id", "text", "quote", "document_id"]):
             yield value
+            for context in value.get("source_context", []):
+                if all(k in context for k in ["id", "document_id", "text", "page"]):
+                    yield {
+                        **value,
+                        "block_id": context["id"],
+                        "quote": context["text"],
+                        "page": context["page"],
+                        "dependency_role": "table_header",
+                        "source_context": [],
+                    }
         for child in value.values():
             yield from claims_in(child)
     elif isinstance(value, list):
@@ -20,36 +30,9 @@ def claims_in(value):
             yield from claims_in(child)
 
 
-def align(claim, target_id):
-    candidates = store.get_blocks(target_id)
-    quote = store.quote_normalize(claim["quote"]).lower()
-    tokens = set(re.findall(r"\w+", quote))
-    ranked = sorted(
-        candidates,
-        key=lambda b: (
-            len(tokens & set(re.findall(r"\w+", b["text"].lower())))
-            / max(1, len(tokens | set(re.findall(r"\w+", b["text"].lower()))))
-        ),
-        reverse=True,
-    )[:8]
-    scores = [
-        (
-            1.0
-            if store.quote_in_source(claim["quote"], b["text"])
-            else SequenceMatcher(
-                None, quote, store.normalize(b["text"]).lower(), autojunk=False
-            ).ratio(),
-            b,
-        )
-        for b in ranked
-    ]
-    best = max(scores, key=lambda x: x[0]) if scores else (0, None)
-    status = (
-        "retained"
-        if best[0] > 0.999
-        else "review_required"
-        if best[0] >= 0.4
-        else "unlocated"
+def align(claim, target_id, aligner=None):
+    aligned = (aligner or SourceAligner(store.get_blocks(target_id))).locate(
+        claim["quote"]
     )
     note = {
         **claim,
@@ -59,14 +42,8 @@ def align(claim, target_id):
     }
     return {
         "note": note,
-        "status": status,
-        "similarity": best[0],
-        "candidate": best[1],
-        "explanation": "原文块保留"
-        if status == "retained"
-        else "找到变化候选，请检查该成果中的论断是否仍成立"
-        if status == "review_required"
-        else "未可靠定位对应原文；不等于已删除",
+        **aligned,
+        "explanation": EXPLANATIONS[aligned["status"]],
     }
 
 
@@ -98,12 +75,13 @@ async def impact(ctx, payload):
             seen.add(key)
             dependencies.append((item, claim))
     results = []
+    aligner = await asyncio.to_thread(SourceAligner, store.get_blocks(target["id"]))
     for i, (item, claim) in enumerate(dependencies[:30]):
         ctx.progress(
             i / max(1, min(30, len(dependencies))),
             f"复核成果依赖 {i + 1}/{min(30, len(dependencies))}",
         )
-        aligned = await asyncio.to_thread(align, claim, target["id"])
+        aligned = await asyncio.to_thread(align, claim, target["id"], aligner)
         if aligned["candidate"]:
             async with model.gate:
                 async with httpx.AsyncClient(timeout=80, trust_env=False) as client:

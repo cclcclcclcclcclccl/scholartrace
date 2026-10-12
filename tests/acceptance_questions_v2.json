@@ -1,0 +1,14 @@
+{
+  "description": "Frozen new questions before the first v2 model run. Agent-authored source-grounded checks, not official or independently human reviewed. Later reruns are development regressions.",
+  "created_at": "2026-10-12",
+  "cases": [
+    {"id":"gpt1_architecture","files":["language_understanding_paper.pdf"],"question":"GPT-1 原论文的解码器层数、隐藏状态维度、注意力头数和前馈层内部维度分别是多少？","source_blocks":["5cdb1d83874506c0788073e3"],"required_patterns":["12","768","3072"]},
+    {"id":"gpt1_training","files":["language_understanding_paper.pdf"],"question":"GPT-1 预训练的最大学习率、预热更新次数、批大小和训练轮数分别是多少？","source_blocks":["5cdb1d83874506c0788073e3"],"required_patterns":["2\\.5\\s*(?:[eE−-]|[×x*].*10)|0\\.00025","2000|2,000","64","100"]},
+    {"id":"gpt_context_compare","files":["language_understanding_paper.pdf","2005.14165v4.pdf"],"question":"比较 GPT-1 预训练每条序列的 token 数量与 GPT-3 所有模型的上下文窗口，各是多少？逐篇给出依据。","source_blocks":["5cdb1d83874506c0788073e3","d901f1d8cb4f3eaf3a2c41ca"],"per_file_patterns":{"language_understanding_paper.pdf":["512"],"2005.14165v4.pdf":["2048|2,048"]},"required_patterns":["512","2048|2,048"]},
+    {"id":"gpt3_normalization_attention","files":["2005.14165v4.pdf"],"question":"GPT-3 沿用了 GPT-2 的哪一种归一化位置？它的注意力层采用什么交替模式？","source_blocks":["10babd8872cb9bd9866201bb"],"required_patterns":["预归一|前置|pre.?norm","稠密|密集|dense","稀疏|sparse"]},
+    {"id":"gpt3_largest_table","files":["2005.14165v4.pdf"],"question":"GPT-3 175B 模型有多少参数、Transformer 层、隐藏维度以及注意力头？请根据架构表逐项回答。","source_blocks":["6a011027d4d28450268d37b9"],"required_patterns":["175|1750","96","12288|12,288"]},
+    {"id":"late_book_alignment","files":["UnderstandingDeepLearning_02_09_26_C.pdf"],"question":"教材如何用国际象棋奖励举例说明 outer alignment（外部对齐）问题？奖励目标与真正想要的结果有什么差别？","source_blocks":["866c3f73ecdc304c9e2a0c18"],"required_patterns":["棋|chess","吃|捕获|captur","赢|获胜|胜利|win","和棋|平局|draw"]},
+    {"id":"cross_architectures","files":["language_understanding_paper.pdf","N19-1423.pdf"],"question":"分别给出 GPT-1 与 BERT-LARGE 的层数、隐藏维度和注意力头数，不要把 BASE 的设置当成 LARGE。","source_blocks":["5cdb1d83874506c0788073e3","e4c514e7679fdb7e75544966"],"per_file_patterns":{"language_understanding_paper.pdf":["12","768"],"N19-1423.pdf":["24","1024","16"]},"required_patterns":["12","768","24","1024","16"]},
+    {"id":"missing_gpt3_gpu_serials","files":["2005.14165v4.pdf"],"question":"请列出 GPT-3 预训练实际使用的每一块 GPU 的硬件序列号。","unanswerable":true}
+  ]
+}

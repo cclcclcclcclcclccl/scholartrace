@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { PageJump } from "./PageJump";
 import { FormulaPanel, FormulaResult } from "./FormulaPanel";
+import { TablePanel, TableResult, type TableContent } from "./TablePanel";
 import {
   request,
   downloadText,
@@ -262,6 +263,7 @@ function Library({
 }: Tools) {
   const [identifier, setId] = useState(selected?.id || papers[0]?.id || "");
   const [title, setTitle] = useState("");
+  const [aliases, setAliases] = useState("");
   const [archived, setArchived] = useState<Paper[]>([]);
   const [duplicates, setDuplicates] = useState<
     (Paper & {
@@ -293,6 +295,9 @@ function Library({
   }, []);
   useEffect(() => {
     setTitle(papers.find((p) => p.id === identifier)?.title || "");
+    setAliases(
+      (papers.find((p) => p.id === identifier)?.aliases || []).join(", "),
+    );
     setStructure(null);
     setDuplicates([]);
     setDiff(null);
@@ -306,7 +311,8 @@ function Library({
       <Help>
         <p>
           顶部“导入文献”支持批量
-          PDF。选择文献后可以修改标题、解析章节与图表、识别扫描文字、检查同文版本。解析后点击“查看结构”核对原文。
+          PDF。选择文献后可以修改标题和常用别名、解析章节与图表、识别扫描文字、检查同文版本。解析后点击“查看结构”核对原文。别名帮助问答识别论文中的模型名称，例如
+          GPT-1；它不作为回答的证据。
         </p>
         <p>
           归档会将文献移出检索范围；旧笔记仍可回到原文。语义索引可重复提交，已处理的段落会跳过。结构解析和
@@ -340,6 +346,15 @@ function Library({
             onChange={(e) => setTitle(e.target.value)}
           />
         </label>
+        <label>
+          文献别名（用逗号分隔）
+          <input
+            aria-label="文献别名"
+            value={aliases}
+            placeholder="例如 GPT-1，用于识别问题中的文献简称"
+            onChange={(e) => setAliases(e.target.value)}
+          />
+        </label>
         <div className="work-row">
           <button
             className="primary-button"
@@ -348,14 +363,20 @@ function Library({
               void run(async () => {
                 await request(
                   `/api/documents/${identifier}`,
-                  { title },
+                  {
+                    title,
+                    aliases: aliases
+                      .split(/[,，;；\n]/)
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  },
                   "PATCH",
                 );
                 await onRefresh();
               })
             }
           >
-            保存标题
+            保存文献信息
           </button>
           {(["parse", "ocr"] as const).map((kind, i) => (
             <button
@@ -508,6 +529,13 @@ function Library({
           关键词与多语言语义联合检索。新文献自动索引，索引期间仍可查关键词。
         </p>
       </div>
+      {identifier && (
+        <TablePanel
+          key={`table-${identifier}`}
+          identifier={identifier}
+          pages={papers.find((p) => p.id === identifier)?.pages || 1}
+        />
+      )}
       {identifier && (
         <FormulaPanel
           key={identifier}
@@ -1821,6 +1849,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
                       future: "未来工作",
                       agent: "Agent 研究",
                       impact: "成果版本复核",
+                      table: "表格提取",
                     } as Record<string, string>
                   )[t.kind] || t.kind}
                 </strong>
@@ -1926,6 +1955,7 @@ type Section = {
     block_id: string;
     document_id: string;
     page: number;
+    source_context?: Anchor[];
   }[];
   evidence: (Anchor & { id: string; text: string })[];
   limitations: string;
@@ -1940,10 +1970,17 @@ type ImpactItem = {
     document_id: string;
     page: number;
     block_id: string;
+    dependency_role?: string;
   };
-  candidate: (Anchor & { text: string }) | null;
+  candidate:
+    | (Anchor & {
+        text: string;
+        segments?: Anchor[];
+        skipped_context?: Anchor[];
+      })
+    | null;
   explanation: string;
-  semantic_review?: { decision?: string; reason: string };
+  semantic_review?: { decision?: string; reason: string; method?: string };
 };
 type ProgressAssessment = {
   question: { text: string; quote: string };
@@ -2006,6 +2043,11 @@ function Artifact({
                 <p>{claim.text}</p>
                 <blockquote>{claim.quote}</blockquote>
                 {b && <SourceButton anchor={b} onLocate={onLocate} />}
+                {claim.source_context?.map((context, i) => (
+                  <SourceButton key={i} anchor={context} onLocate={onLocate}>
+                    核对表头
+                  </SourceButton>
+                ))}
               </div>
             );
           })}
@@ -2077,6 +2119,12 @@ function Artifact({
       )}
       {result.kind === "formula" && (
         <FormulaResult identifier={result.id} content={c} />
+      )}
+      {result.kind === "table" && (
+        <TableResult
+          identifier={result.id}
+          content={c as unknown as TableContent}
+        />
       )}
       {result.kind === "agent" && (
         <>
@@ -2156,11 +2204,18 @@ function Artifact({
             <section className="grounded-claim" key={i}>
               <h3>{item.artifact_title}</h3>
               <p>{item.note.text}</p>
+              {item.note.dependency_role === "table_header" && (
+                <small>
+                  此项核对的是该论断依赖的表头；列含义变化也会影响数字解释。
+                </small>
+              )}
               <strong>
                 {item.semantic_review?.decision === "claim_changed"
                   ? "论断可能受影响"
                   : item.semantic_review?.decision === "same_claim"
-                    ? "模型初判论断未变"
+                    ? item.semantic_review.method
+                      ? "原文规则核对未见变化"
+                      : "模型初判论断未变"
                     : item.explanation}
               </strong>
               <p>{item.semantic_review?.reason}</p>
@@ -2168,9 +2223,33 @@ function Artifact({
               {item.candidate && (
                 <>
                   <blockquote>新版本候选：{item.candidate.text}</blockquote>
-                  <SourceButton anchor={item.candidate} onLocate={onLocate}>
-                    核对新版本出处
-                  </SourceButton>
+                  {!!item.candidate.skipped_context?.length && (
+                    <details>
+                      <summary>跨页衔接时略过的图表与页脚（可核对）</summary>
+                      {item.candidate.skipped_context.map((segment, index) => (
+                        <div key={index}>
+                          <blockquote>{segment.text}</blockquote>
+                          <SourceButton anchor={segment} onLocate={onLocate}>
+                            查看第 {segment.page} 页上下文
+                          </SourceButton>
+                        </div>
+                      ))}
+                    </details>
+                  )}
+                  {(item.candidate.segments || [item.candidate]).map(
+                    (segment, index, segments) => (
+                      <SourceButton
+                        key={index}
+                        anchor={segment}
+                        onLocate={onLocate}
+                      >
+                        核对新版本出处
+                        {segments.length > 1
+                          ? ` ${index + 1}/${segments.length}`
+                          : ""}
+                      </SourceButton>
+                    ),
+                  )}
                 </>
               )}
               <a href={`/api/artifacts/${item.artifact_id}/export?format=md`}>

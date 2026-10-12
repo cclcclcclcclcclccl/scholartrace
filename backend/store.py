@@ -240,12 +240,15 @@ def get_document(document_id: str) -> dict:
 
 def list_documents() -> list[dict]:
     with connection() as conn:
-        return [
+        records = [
             dict(r)
             for r in conn.execute(
-                "SELECT id,name,title,pages,chars,status,arxiv_id,version,created_at,archived FROM documents WHERE archived=0 ORDER BY title,version DESC"
+                "SELECT id,name,title,pages,chars,status,arxiv_id,version,created_at,archived,json_extract(metadata,'$.aliases') AS aliases FROM documents WHERE archived=0 ORDER BY title,version DESC"
             )
         ]
+    for record in records:
+        record["aliases"] = json.loads(record["aliases"] or "[]")
+    return records
 
 
 def get_blocks(document_id: str, page: int | None = None) -> list[dict]:

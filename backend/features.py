@@ -24,6 +24,7 @@ from . import (
     database,
     diagrams,
     formula,
+    tables,
 )
 from . import audit, impact
 
@@ -119,6 +120,7 @@ class TaskRequest(BaseModel):
         "impact",
         "diagram",
         "formula",
+        "table",
     ]
     payload: TaskPayload
 
@@ -133,6 +135,7 @@ async def create_job(body: TaskRequest):
         "future",
         "impact",
         "formula",
+        "table",
     } and not payload.get("document_id"):
         raise ValueError("请选择一篇文献")
     if body.kind in {"review", "writing", "diagram"} and not payload["topic"].strip():
@@ -141,6 +144,12 @@ async def create_job(body: TaskRequest):
         raise ValueError("请填写研究目标")
     if body.kind == "formula":
         formula.area_for(
+            store.get_document(payload["document_id"]),
+            payload.get("page", 1),
+            payload.get("bbox", []),
+        )
+    if body.kind == "table":
+        tables.area_for(
             store.get_document(payload["document_id"]),
             payload.get("page", 1),
             payload.get("bbox", []),
@@ -243,12 +252,22 @@ def retrieval_status():
 class DocumentEdit(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=350)
     archived: bool | None = None
+    aliases: list[str] | None = Field(default=None, max_length=12)
 
 
 @router.patch("/documents/{identifier}")
 def edit_document(identifier: str, body: DocumentEdit):
-    store.get_document(identifier)
+    record = store.get_document(identifier)
     with store.connection() as c:
+        if body.aliases is not None:
+            aliases = list(dict.fromkeys(a.strip() for a in body.aliases if a.strip()))
+            if any(len(a) > 100 for a in aliases):
+                raise ValueError("每个文献别名最多 100 字")
+            metadata = {**record["metadata"], "aliases": aliases}
+            c.execute(
+                "UPDATE documents SET metadata=? WHERE id=?",
+                (json.dumps(metadata, ensure_ascii=False), identifier),
+            )
         if body.title is not None:
             c.execute(
                 "UPDATE documents SET title=? WHERE id=?",
@@ -361,6 +380,72 @@ def references(identifier: str):
     record = store.get_document(identifier)
     entries, citations = parsing.references(record)
     return {"references": entries, "citations": citations}
+
+
+@router.get("/documents/{identifier}/table-regions")
+def table_regions(identifier: str, page: int = Query(default=1, ge=1)):
+    return tables.regions(identifier, page)
+
+
+class TableCorrection(BaseModel):
+    rows: list[list[str]] | None = Field(default=None, max_length=200)
+    column_bounds: list[float] | None = Field(default=None, max_length=31)
+    revision: int = Field(ge=0)
+
+
+@router.patch("/tables/{identifier}")
+def correct_table(identifier: str, body: TableCorrection):
+    if (body.rows is None) == (body.column_bounds is None):
+        raise ValueError("请提交单元格修改或分列线设置")
+    with store.connection() as c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute(
+            "SELECT * FROM artifacts WHERE id=? AND kind='table'", (identifier,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(identifier)
+        content = json.loads(row["content"])
+        if content["revision"] != body.revision:
+            raise HTTPException(409, "此表格已在其他页面修改，请重新打开后再保存")
+        content.setdefault("edits", []).append(
+            {
+                "revision": body.revision,
+                "rows": content["rows"],
+                "column_bounds": content["column_bounds"],
+            }
+        )
+        if body.rows is not None:
+            same_shape = len(body.rows) == len(content["rows"]) and all(
+                len(a) == len(b) for a, b in zip(body.rows, content["rows"])
+            )
+            content["rows"] = tables.validate_rows(body.rows)
+            # Added/deleted rows are user edits, not newly detected source coordinates.
+            if not same_shape:
+                content["cells"] = None
+        else:
+            content.update(
+                tables.grid_from_tokens(
+                    content["tokens"], content["source"]["bbox"], body.column_bounds
+                )
+            )
+        content["revision"] += 1
+        c.execute(
+            "UPDATE artifacts SET content=? WHERE id=?",
+            (json.dumps(content, ensure_ascii=False), identifier),
+        )
+    return research.artifact(identifier)
+
+
+@router.get("/tables/{identifier}/export")
+def export_table(identifier: str):
+    item = research.artifact(identifier)
+    if item["kind"] != "table":
+        raise ValueError("请选择表格记录")
+    return Response(
+        tables.csv_text(item["content"]["rows"]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="source-table.csv"'},
+    )
 
 
 @router.get("/documents/{identifier}/crop")

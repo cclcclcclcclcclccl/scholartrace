@@ -57,6 +57,8 @@ type Block = {
   height: number;
   title?: string;
   version?: number;
+  segments?: Block[];
+  skipped_context?: Block[];
 };
 type Note = {
   id: number;
@@ -79,6 +81,7 @@ type AuditItem = {
   numbers_only_in_new: string[];
   semantic_review?: {
     status: string;
+    method?: string;
     decision?: "same_claim" | "claim_changed" | "unclear";
     reason: string;
     old_quote?: string;
@@ -92,12 +95,24 @@ type Answer = {
     title: string;
     name: string;
     status: string;
-    claims: { text: string; quote: string; block_id: string }[];
+    claims: {
+      text: string;
+      quote: string;
+      block_id: string;
+      source_context?: Block[];
+    }[];
   }[];
   evidence: Block[];
   message: string;
   mode: string;
-  model_answer: { text: string; quote: string; block_id: string }[] | null;
+  model_answer:
+    | {
+        text: string;
+        quote: string;
+        block_id: string;
+        source_context?: Block[];
+      }[]
+    | null;
 };
 
 async function api<T>(
@@ -981,6 +996,15 @@ function App() {
                         >
                           核对原文 <ArrowUpRight size={13} />
                         </button>
+                        {claim.source_context?.map((context) => (
+                          <button
+                            key={context.id}
+                            onClick={() => locate(context)}
+                          >
+                            核对表头 · 第 {context.page} 页{" "}
+                            <ArrowUpRight size={13} />
+                          </button>
+                        ))}
                       </div>
                     ))}
                     <p className="result-note">{answer.message}</p>
@@ -1282,9 +1306,9 @@ function App() {
                     className={`audit-badge ${item.semantic_review?.decision === "same_claim" ? "retained" : item.status}`}
                   >
                     {item.semantic_review?.decision === "same_claim"
-                      ? "论断未见变化 · 模型初判"
+                      ? `论断未见变化 · ${item.semantic_review.method ? "原文规则核对" : "模型初判"}`
                       : item.semantic_review?.decision === "claim_changed"
-                        ? "论断有变化 · 模型初判"
+                        ? `论断有变化 · ${item.semantic_review.method ? "原文规则核对" : "模型初判"}`
                         : {
                             retained: "原文保留",
                             review_required: "需要复核",
@@ -1299,7 +1323,11 @@ function App() {
                     <div>
                       <strong>围绕这条笔记的比较</strong>
                       <p>{item.semantic_review.reason}</p>
-                      <small>两侧引文已核验存在；此结果为模型初步判断。</small>
+                      <small>
+                        {item.semantic_review.method
+                          ? "两侧引文已按明确文字规则核对；适用条件仍需结合全文。"
+                          : "两侧引文已核验存在；此结果为模型初步判断。"}
+                      </small>
                     </div>
                   </div>
                 )}
@@ -1321,14 +1349,38 @@ function App() {
                     <blockquote>
                       {item.candidate?.text || "未找到可比较的原文"}
                     </blockquote>
-                    {item.candidate && (
-                      <button
-                        className="text-button"
-                        onClick={() => locate(item.candidate!)}
-                      >
-                        查看目标原文 <ArrowUpRight size={13} />
-                      </button>
+                    {!!item.candidate?.skipped_context?.length && (
+                      <details>
+                        <summary>跨页衔接时略过的图表与页脚（可核对）</summary>
+                        {item.candidate.skipped_context.map((segment) => (
+                          <div key={segment.id}>
+                            <blockquote>{segment.text}</blockquote>
+                            <button
+                              className="text-button"
+                              onClick={() => locate(segment)}
+                            >
+                              查看第 {segment.page} 页上下文
+                            </button>
+                          </div>
+                        ))}
+                      </details>
                     )}
+                    {item.candidate &&
+                      (item.candidate.segments || [item.candidate]).map(
+                        (segment, index, segments) => (
+                          <button
+                            key={segment.id}
+                            className="text-button"
+                            onClick={() => locate(segment)}
+                          >
+                            查看目标原文
+                            {segments.length > 1
+                              ? ` ${index + 1}/${segments.length} · 第 ${segment.page} 页`
+                              : ""}{" "}
+                            <ArrowUpRight size={13} />
+                          </button>
+                        ),
+                      )}
                   </div>
                 </div>
               </article>
