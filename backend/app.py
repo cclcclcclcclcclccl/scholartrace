@@ -26,6 +26,7 @@ from . import (
     accounts,
     features,
     research,
+    workspace_tools,
 )
 from .review import review_change
 
@@ -66,6 +67,7 @@ app = FastAPI(title="ScholarTrace", version="0.2.0", lifespan=lifespan)
 app.middleware("http")(accounts.scope)
 app.include_router(accounts.router)
 app.include_router(features.router)
+app.include_router(workspace_tools.router)
 
 
 @app.exception_handler(KeyError)

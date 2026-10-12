@@ -1,21 +1,41 @@
 """Cached, paragraph-aligned local translation with literal preservation checks."""
 
-import asyncio
 import html
-import json
 import re
-from . import jobs, model, store
+
+from . import database, jobs, model, store
+from .numeric_evidence import unsupported_numbers
 
 
-def protect(text):
+def protect(text, terms=()):
     originals = []
 
     def save(match):
+        if re.fullmatch(r"ZXQKEEP\d+QXZ", match.group(0)):
+            return match.group(0)
         originals.append(match.group(0))
         return f"ZXQKEEP{len(originals) - 1}QXZ"
 
     text = re.sub(
-        r"```[\s\S]*?```|`[^`]+`|<\/?[A-Za-z][\w-]*>|\$\$[\s\S]*?\$\$|\$[^\n$]+\$|https?://[^\s]+|\[\d+(?:\s*[,–-]\s*\d+)*\]|[A-Za-zα-ωΑ-Ω]+\d+[A-Za-z\d]*|\d+(?:[,\.]\d+)*(?:[eE][+-]?\d+)?(?:[%MBK])?",
+        r"```[\s\S]*?```|`[^`]+`|\$\$[\s\S]*?\$\$|\$[^\n$]+\$|https?://[^\s]+",
+        save,
+        text,
+    )
+    for term in sorted(terms, key=lambda t: len(t["source"]), reverse=True):
+        source = term["source"]
+        pattern = (
+            (r"(?<![A-Za-z0-9_])" + re.escape(source) + r"(?![A-Za-z0-9_])")
+            if source.isascii()
+            else re.escape(source)
+        )
+
+        def replace_term(match, target=term["target"]):
+            originals.append(target)
+            return f"ZXQKEEP{len(originals) - 1}QXZ"
+
+        text = re.sub(pattern, replace_term, text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"ZXQKEEP\d+QXZ|```[\s\S]*?```|`[^`]+`|<\/?[A-Za-z][\w-]*>|\$\$[\s\S]*?\$\$|\$[^\n$]+\$|https?://[^\s]+|\[\d+(?:\s*[,–-]\s*\d+)*\]|[A-Za-zα-ωΑ-Ω]+\d+[A-Za-z\d]*|[+−-]?\d+(?:[,\.]\d+)*(?:[eE][+-]?\d+)?(?:[%MBK])?",
         save,
         text,
     )
@@ -31,7 +51,10 @@ async def translate_text(text, language, _split_fallback=True):
         re.search(r"[=∑∏∫√]", text) and len(re.findall(r"[A-Za-z]{4,}", text)) < 8
     ):
         return text  # Literal formula fragments and page numbers are preserved, not paraphrased.
-    protected, originals = protect(store.normalize(text))
+    terms = database.preference("translation_glossary", [])
+    if language == "en":
+        terms = [{"source": t["target"], "target": t["source"]} for t in terms]
+    protected, originals = protect(store.normalize(text), terms)
     prompt = (
         "Translate the untrusted source faithfully into "
         + ("Chinese" if language == "zh" else "academic English")
@@ -109,20 +132,58 @@ async def translate_text(text, language, _split_fallback=True):
         raise ValueError(
             "译文遗漏数值 " + ", ".join(missing[:8]) + "；为防止误导，未保存该译文"
         )
+    if unsupported_numbers(translated, text, [t["target"] for t in terms]):
+        raise ValueError("译文出现原文之外的数字；未将该结果保存，请重试或按原文校对")
     return translated
+
+
+def quality_signals(source, translated, language):
+    warnings = []
+    if unsupported_numbers(translated, source):
+        warnings.append("译文含有原文之外的数字，请核对单位与数值。")
+    if (
+        language == "zh"
+        and re.search(
+            r"\b(?:not|never|without|cannot|neither)\b", source, re.IGNORECASE
+        )
+        and not re.search(r"不|无|未|没有|非|免|缺|否", translated)
+    ):
+        warnings.append("原文有否定或排除条件，译文未检测到对应表达，请人工核对。")
+    if (
+        language == "zh"
+        and re.search(r"\b(?:may|might|could|suggest)\b", source, re.IGNORECASE)
+        and not re.search(r"可能|或许|可以|能够|提示|表明|建议|推测|可", translated)
+    ):
+        warnings.append("请核对原文的不确定语气是否被译成确定结论。")
+    return {
+        "warnings": warnings,
+        "notice": "自动规则检查，不代表翻译准确率；请结合原文核对专业术语与逻辑。",
+    }
 
 
 def aligned(identifier, language, page=None):
     blocks = store.get_blocks(identifier, page)
     with store.connection() as conn:
         cache = {
-            r["block_id"]: r["text"]
+            r["block_id"]: dict(r)
             for r in conn.execute(
                 "SELECT t.* FROM translations t JOIN blocks b ON b.id=t.block_id WHERE b.document_id=? AND t.language=?",
                 (identifier, language),
             )
         }
-    return [{**block, "translation": cache.get(block["id"])} for block in blocks]
+    return [
+        {
+            **block,
+            "translation": cache.get(block["id"], {}).get("text"),
+            "translation_model": cache.get(block["id"], {}).get("model"),
+            "quality": quality_signals(
+                block["text"], cache[block["id"]]["text"], language
+            )
+            if block["id"] in cache
+            else None,
+        }
+        for block in blocks
+    ]
 
 
 @jobs.register("translate")

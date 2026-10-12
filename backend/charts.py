@@ -4,16 +4,16 @@ import csv
 import io
 import json
 import math
-import os
 import re
 import threading
-from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from . import store, research
+
+from . import research, store
 
 plot_lock = threading.Lock()
 COLORS = ["#246454", "#d28b40", "#487caf", "#a15c85", "#70874c", "#aa614f"]
@@ -49,7 +49,7 @@ def prepare(spec):
         raise ValueError("请选择存在的横轴列和数值列")
     if len(ys) > 6 or len(ys) != len(set(ys)):
         raise ValueError("最多选择 6 个不同数值列")
-    if kind not in {"line", "bar", "table", "radar3d"}:
+    if kind not in {"line", "bar", "table", "radar3d", "scatter"}:
         raise ValueError("不支持的图表类型")
     if kind == "radar3d" and not 3 <= len(ys) <= 6:
         raise ValueError("三维雷达需要 3—6 个指标列")
@@ -70,6 +70,26 @@ def prepare(spec):
         values.append(v)
     if not values:
         raise ValueError("没有完整的数值行可绘图")
+    for scale in [spec.get("xscale", "linear"), spec.get("yscale", "linear")]:
+        if scale not in {"linear", "log"}:
+            raise ValueError("刻度须为 linear 或 log")
+    if kind in {"table", "radar3d"} and spec.get("yscale", "linear") != "linear":
+        raise ValueError("表格和归一化雷达图不使用对数刻度")
+    if spec.get("yscale") == "log" and any(n <= 0 for row in values for n in row):
+        raise ValueError("对数纵轴要求所有数值大于 0；请修改刻度或核对数据")
+    if kind == "scatter" or spec.get("xscale") == "log":
+        try:
+            numbers = [float(label) for label in labels]
+        except ValueError:
+            raise ValueError("散点图或对数横轴需要数值横轴") from None
+        if (
+            not all(math.isfinite(n) for n in numbers)
+            or spec.get("xscale") == "log"
+            and any(n <= 0 for n in numbers)
+        ):
+            raise ValueError("横轴数值无效；对数刻度要求所有值大于 0")
+    if kind in {"bar", "table", "radar3d"} and spec.get("xscale", "linear") != "linear":
+        raise ValueError("分类图表不使用对数横轴")
     if kind in {"bar", "table", "radar3d"} and len(values) > 40:
         raise ValueError("柱状、表格、雷达最多 40 行，请先筛选 CSV")
     return labels, np.asarray(values), missing
@@ -124,7 +144,7 @@ def render(spec, folder):
             )
         else:
             indices = np.arange(len(labels))
-            if kind == "line":
+            if kind in {"line", "scatter"}:
                 try:
                     numeric_x = np.asarray([float(label) for label in labels])
                     if not np.all(np.isfinite(numeric_x)):
@@ -145,6 +165,15 @@ def render(spec, folder):
                         marker="o" if len(labels) < 40 else None,
                         markersize=3,
                     )
+                elif kind == "scatter":
+                    ax.scatter(
+                        indices,
+                        values[:, i],
+                        label=name,
+                        color=COLORS[i % 6],
+                        s=24,
+                        alpha=0.85,
+                    )
                 else:
                     ax.bar(
                         indices + (i - (len(ys) - 1) / 2) * 0.8 / len(ys),
@@ -155,6 +184,8 @@ def render(spec, folder):
                     )
             step = max(1, len(labels) // 20)
             ax.set_xticks(indices[::step], labels[::step], rotation=30, ha="right")
+            ax.set_xscale(spec.get("xscale", "linear"))
+            ax.set_yscale(spec.get("yscale", "linear"))
             ax.set_xlabel(spec["x"])
             ax.set_ylabel(spec.get("unit", "Value"))
             ax.grid(axis="y", alpha=0.2)

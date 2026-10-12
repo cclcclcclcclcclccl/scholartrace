@@ -1,0 +1,40 @@
+import { createRequire } from "node:module";
+import { readFile, writeFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+const { chromium } = createRequire(import.meta.url)("C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
+const browser = await chromium.launch({executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true});
+const page = await browser.newPage({viewport: {width: 1512, height: 1080}, baseURL: "http://127.0.0.1:8765"});
+const report = {checks: [], errors: []};
+page.on("pageerror", e => report.errors.push(String(e)));
+const job = JSON.parse(await readFile("artifacts/product-audit/matrix-after-context-fix.json", "utf8"));
+const title = job.result.title;
+try {
+  await page.goto("/");
+  await page.getByRole("dialog").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", {name: "任务与成果", exact: true}).click();
+  await page.getByRole("button", {name: new RegExp(title)}).click();
+  const matrix = page.locator(".evidence-matrix");
+  await matrix.waitFor();
+  assert.equal(await matrix.locator("tbody tr").count(), 2);
+  assert.equal(await matrix.getByText("未找到可核验答案", {exact: true}).count(), 2);
+  await page.getByText("编辑写作稿与版本记录", {exact: true}).click();
+  const editor = page.getByLabel("研究写作草稿");
+  const initial = await editor.inputValue();
+  assert(initial.includes("512"));
+  const text = initial + "\n\n浏览器验收备注：碳排放尚无可核验依据，不能填入估计值作为实测结果。";
+  await editor.fill(text);
+  await page.getByRole("button", {name: "保存写作稿", exact: true}).click();
+  await page.getByText(/已保存编辑稿第/).waitFor();
+  const saved = await (await page.request.get(`/api/artifacts/${job.result.id}`)).json();
+  assert.equal(saved.content.draft.text, text.trim());
+  const exported = await (await page.request.get(`/api/artifacts/${job.result.id}/export?format=md`)).text();
+  assert(exported.includes("人工编辑稿（尚未逐句核验）") && exported.includes("复现前待补清单"));
+  report.checks.push("Real 2-paper matrix, 2 abstained cells, editable source-labelled draft saved and exported");
+  await matrix.screenshot({path: "artifacts/product-audit/matrix-upgrade.png"});
+  await matrix.getByRole("button", {name: /原文第/}).first().click();
+  await page.locator("canvas").waitFor();
+  report.checks.push("Matrix citation opens PDF reader");
+  assert.deepEqual(report.errors, []);
+} catch(e) { report.failure = String(e); throw e; }
+finally {await writeFile("artifacts/product-audit/matrix-writing-ui.json", JSON.stringify(report,null,2)); await browser.close(); console.log(JSON.stringify(report,null,2));}

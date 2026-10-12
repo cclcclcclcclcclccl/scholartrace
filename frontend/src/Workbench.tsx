@@ -18,6 +18,15 @@ import {
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
+import {
+  WritingEditor,
+  LibraryOrganizer,
+  GlossaryEditor,
+  TranslationEditor,
+  MatrixBuilder,
+  MatrixResult,
+  type MatrixRow,
+} from "./ResearchTools";
 import { PageJump } from "./PageJump";
 import { FormulaPanel, FormulaResult } from "./FormulaPanel";
 import { TablePanel, TableResult, type TableContent } from "./TablePanel";
@@ -529,6 +538,11 @@ function Library({
           关键词与多语言语义联合检索。新文献自动索引，索引期间仍可查关键词。
         </p>
       </div>
+      <LibraryOrganizer
+        key={`organize-${identifier}`}
+        identifier={identifier}
+        onSelect={setId}
+      />
       {identifier && (
         <TablePanel
           key={`table-${identifier}`}
@@ -636,6 +650,8 @@ type Aligned = Anchor & {
   id: string;
   text: string;
   translation: string | null;
+  quality?: { warnings: string[] };
+  translation_model?: string;
 };
 type Reference = Anchor & {
   number: number;
@@ -796,6 +812,7 @@ function Translation({ papers, selected, run, submit, busy, onLocate }: Tools) {
           )}
         </div>
       </div>
+      <GlossaryEditor />
       <div className="bilingual-grid">
         <div>
           <h3>原文 · 第 {page} 页</h3>
@@ -825,7 +842,25 @@ function Translation({ papers, selected, run, submit, busy, onLocate }: Tools) {
                 <p>
                   {b.translation || "此段尚未翻译。可提交本页或全文翻译任务。"}
                 </p>
-                <small>对应原文段落 {blocks.indexOf(b) + 1}</small>
+                <small>
+                  对应原文段落 {blocks.indexOf(b) + 1}
+                  {b.translation_model === "human-corrected"
+                    ? " · 已人工校正"
+                    : ""}
+                </small>
+                {b.quality?.warnings.map((w, i) => (
+                  <p className="work-notice" key={i}>
+                    {w}
+                  </p>
+                ))}
+                {b.translation && (
+                  <TranslationEditor
+                    blockId={b.id}
+                    language={language}
+                    text={b.translation}
+                    onSaved={() => void refresh()}
+                  />
+                )}
               </article>
             ))}
           </div>
@@ -934,6 +969,8 @@ type RemotePaper = {
     reproduction: string;
   }[];
   vote?: number;
+  retrieval_status?: string;
+  retrieved_at?: string;
 };
 type Tracker = {
   id: string;
@@ -946,6 +983,38 @@ type Tracker = {
 function Discover({ run, submit, busy, setNotice }: Tools) {
   const [query, setQuery] = useState("retrieval augmented generation evidence");
   const [source, setSource] = useState("arxiv");
+  const [yearFrom, setYearFrom] = useState("");
+  const [yearTo, setYearTo] = useState("");
+  const [latest, setLatest] = useState(false);
+  const [searchStart, setSearchStart] = useState(0);
+  const [searchSpec, setSearchSpec] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  async function searchPapers(start = 0, force = false, previous = false) {
+    const spec =
+      previous && searchSpec
+        ? searchSpec
+        : {
+            query,
+            source,
+            latest,
+            year_from: yearFrom ? Number(yearFrom) : null,
+            year_to: yearTo ? Number(yearTo) : null,
+          };
+    const result = await request<RemotePaper[]>("/api/discover/search", {
+      ...spec,
+      start,
+      force,
+    });
+    setPapers(result);
+    setSearchStart(start);
+    setSearchSpec(spec);
+    setNotice(
+      result.length
+        ? `第 ${start + 1}—${start + result.length} 条；可逐页继续发现。`
+        : "此查询页未返回结果，可调整条件或切换数据源。外部接口错误会单独提示。",
+    );
+  }
   const [papers, setPapers] = useState<RemotePaper[]>([]);
   const [trackers, setTrackers] = useState<Tracker[]>([]);
   const refresh = async () => setTrackers(await request("/api/trackers"));
@@ -963,6 +1032,14 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
         <div className="eyebrow">
           {p.published?.slice(0, 10)} · {p.id}
         </div>
+        {p.retrieval_status && p.retrieval_status !== "live" && (
+          <small className="work-notice">
+            {p.retrieval_status === "stale_after_error"
+              ? "在线请求失败，展示历史缓存；并非最新结果"
+              : "10 分钟内的查询缓存"}{" "}
+            · {p.retrieved_at}
+          </small>
+        )}
         <h3>
           <a href={p.url} target="_blank" rel="noreferrer">
             {p.title} <ArrowUpRight size={14} />
@@ -1064,9 +1141,7 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
         className="work-card"
         onSubmit={(e) => {
           e.preventDefault();
-          void run(async () =>
-            setPapers(await request("/api/discover/search", { query, source })),
-          );
+          void run(() => searchPapers());
         }}
       >
         <div className="work-row">
@@ -1093,6 +1168,32 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
             )}
             搜索论文
           </button>
+          <input
+            aria-label="发表起始年份"
+            type="number"
+            min={1900}
+            max={2100}
+            value={yearFrom}
+            onChange={(e) => setYearFrom(e.target.value)}
+            placeholder="起始年份"
+          />
+          <input
+            aria-label="发表结束年份"
+            type="number"
+            min={1900}
+            max={2100}
+            value={yearTo}
+            onChange={(e) => setYearTo(e.target.value)}
+            placeholder="结束年份"
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={latest}
+              onChange={(e) => setLatest(e.target.checked)}
+            />
+            按最新排序
+          </label>
           <button
             type="button"
             disabled={busy || !query.trim()}
@@ -1108,6 +1209,42 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
           </button>
         </div>
       </form>
+      {searchSpec && (
+        <div className="work-row">
+          <button
+            disabled={busy || searchStart === 0}
+            onClick={() =>
+              void run(() =>
+                searchPapers(Math.max(0, searchStart - 12), false, true),
+              )
+            }
+          >
+            上一页论文
+          </button>
+          <span>查询页 {Math.floor(searchStart / 12) + 1}</span>
+          <button
+            disabled={busy || papers.length < 12 || searchStart >= 9888}
+            onClick={() =>
+              void run(() => searchPapers(searchStart + 12, false, true))
+            }
+          >
+            下一页论文
+          </button>
+          <button
+            disabled={busy}
+            onClick={() =>
+              void run(() => searchPapers(searchStart, true, true))
+            }
+          >
+            重新请求在线结果
+          </button>
+        </div>
+      )}
+      <p>
+        年份按发表时间筛选；arXiv
+        使用首次提交时间，最新排序按更新日期。主题追踪仍按主题在 arXiv
+        持续检查，不受本次分页和年份筛选限制。
+      </p>
       {papers.map(card)}
       {!papers.length && (
         <Empty>输入研究问题，从检索结果开始建立文献库。</Empty>
@@ -1124,6 +1261,7 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
                   reason: string;
                 }>("/api/discover/recommendations");
                 setPapers(r.papers);
+                setSearchSpec(null);
                 setNotice(r.reason);
               })
             }
@@ -1455,6 +1593,10 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
   const [chartTitle, setChartTitle] =
     useState("示例数据比较（非论文实验结果）");
   const [unit, setUnit] = useState("百分比 (%)");
+  const [xscale, setXscale] = useState("linear");
+  const [yscale, setYscale] = useState("linear");
+  const [chartIntent, setChartIntent] = useState("");
+  const [planNotice, setPlanNotice] = useState("");
   async function renderDiagram(source = code, save = true) {
     const mermaid = (await import("mermaid")).default;
     mermaid.initialize({
@@ -1485,6 +1627,11 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
           仅为演示数据，请先替换。
         </p>
       </Help>
+      <MatrixBuilder
+        ids={ids}
+        busy={busy}
+        submit={(kind, payload) => run(() => submit(kind, payload))}
+      />
       <div className="work-card">
         <h3>从研究意图出发</h3>
         <textarea
@@ -1644,7 +1791,69 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
             setChart(null);
           }}
         />
+        <label>
+          用一句话描述想画什么
+          <textarea
+            aria-label="绘图意图"
+            value={chartIntent}
+            onChange={(e) => setChartIntent(e.target.value)}
+            maxLength={1500}
+            placeholder="例如：横轴用训练步数，纵轴用损失，画对数纵轴折线图"
+          />
+        </label>
+        <button
+          disabled={busy || chartIntent.trim().length < 3}
+          onClick={() =>
+            void run(async () => {
+              const plan = await request<{
+                x: string;
+                ys: string[];
+                kind: string;
+                title: string;
+                unit: string;
+                xscale: string;
+                yscale: string;
+                limitations: string;
+                notice: string;
+              }>("/api/charts/plan", { csv, intent: chartIntent });
+              setX(plan.x);
+              setYs(plan.ys.join(","));
+              setKind(plan.kind);
+              setChartTitle(plan.title);
+              setUnit(plan.unit);
+              setXscale(plan.xscale);
+              setYscale(plan.yscale);
+              setChart(null);
+              setPlanNotice(plan.notice + " " + plan.limitations);
+            })
+          }
+        >
+          解析绘图意图
+        </button>
+        {planNotice && <p role="status">{planNotice}</p>}
         <div className="chart-controls">
+          <label>
+            横轴刻度
+            <select
+              aria-label="横轴刻度"
+              value={xscale}
+              onChange={(e) => setXscale(e.target.value)}
+            >
+              <option value="linear">线性</option>
+              <option value="log">对数（正数）</option>
+            </select>
+          </label>
+          <label>
+            纵轴刻度
+            <select
+              aria-label="纵轴刻度"
+              value={yscale}
+              onChange={(e) => setYscale(e.target.value)}
+            >
+              <option value="linear">线性</option>
+              <option value="log">对数（正数）</option>
+            </select>
+          </label>
           <label>
             图标题
             <input
@@ -1686,6 +1895,7 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
             >
               <option value="line">折线图</option>
               <option value="bar">柱状图</option>
+              <option value="scatter">散点图</option>
               <option value="table">数据表格</option>
               <option value="radar3d">三维雷达图</option>
             </select>
@@ -1707,6 +1917,8 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
                   kind,
                   title: chartTitle,
                   unit,
+                  xscale,
+                  yscale,
                 }),
               ),
             )
@@ -1846,6 +2058,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
                       track: "主题追踪",
                       review: "证据综述",
                       writing: "写作方案",
+                      matrix: "证据比较矩阵",
                       future: "未来工作",
                       agent: "Agent 研究",
                       impact: "成果版本复核",
@@ -2015,6 +2228,20 @@ function Artifact({
       {typeof c.notice === "string" && (
         <p className="work-notice">{c.notice}</p>
       )}
+      {["writing", "review", "matrix"].includes(result.kind) && (
+        <WritingEditor key={result.id} identifier={result.id} content={c} />
+      )}
+      {Array.isArray(c.plan_checks) && c.plan_checks.length > 0 && (
+        <section className="work-notice">
+          <h3>执行实验前必须补齐</h3>
+          <p>
+            方案仍是草稿。以下检查发现未定条件或可能不匹配的设计，请编辑后核对。
+          </p>
+          {(c.plan_checks as string[]).map((check, i) => (
+            <p key={i}>• {check}</p>
+          ))}
+        </section>
+      )}
       {proposal &&
         Object.entries(proposal).map(([k, v]) => (
           <section key={k}>
@@ -2030,10 +2257,36 @@ function Artifact({
                 )[k]
               }
             </h3>
-            <p>{v}</p>
+            <p style={{ whiteSpace: "pre-line" }}>{v}</p>
           </section>
         ))}
-      {sections.map((s, i) => (
+      {result.kind === "matrix" && (
+        <MatrixResult
+          rows={(c.matrix || []) as MatrixRow[]}
+          onLocate={onLocate}
+        />
+      )}
+      {Array.isArray(c.missing_items) && c.missing_items.length > 0 && (
+        <section>
+          <h3>复现前待补清单</h3>
+          {(
+            c.missing_items as {
+              title: string;
+              field: string;
+              action: string;
+            }[]
+          ).map((m, i) => (
+            <p key={i}>
+              <strong>
+                {m.title} · {m.field}
+              </strong>
+              <br />
+              {m.action}
+            </p>
+          ))}
+        </section>
+      )}
+      {(result.kind === "matrix" ? [] : sections).map((s, i) => (
         <section key={i}>
           <h3>{s.title}</h3>
           {s.claims.map((claim, j) => {

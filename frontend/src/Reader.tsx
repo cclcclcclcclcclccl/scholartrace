@@ -3,6 +3,7 @@ import { List, LoaderCircle, Minus, Plus, RotateCcw } from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "./text-layer.css";
+import { ReadingTools } from "./ResearchTools";
 import { request } from "./workspaceApi";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -17,7 +18,7 @@ type Outline = [number, string, number][];
 export function Reader({
   document,
   page,
-  highlight,
+  highlight: sourceHighlight,
   onPage,
   reloadKey,
 }: {
@@ -27,6 +28,11 @@ export function Reader({
   onPage: (page: number) => void;
   reloadKey: number;
 }) {
+  const [searchHighlight, setSearchHighlight] = useState<Source | null>(null);
+  const highlight = searchHighlight || sourceHighlight;
+  useEffect(() => {
+    setSearchHighlight(null);
+  }, [sourceHighlight, document.id]);
   const container = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textLayer = useRef<HTMLDivElement>(null);
@@ -83,12 +89,16 @@ export function Reader({
     const current = ++selectionRequest.current;
     setTranslating(true);
     try {
-      const result = await request<{ translation: string }>(
-        "/api/translate/text",
-        { text: selection, language: "zh" },
-      );
+      const result = await request<{
+        translation: string;
+        quality?: { warnings: string[] };
+      }>("/api/translate/text", { text: selection, language: "zh" });
       if (current === selectionRequest.current)
-        setSelectionTranslation(result.translation);
+        setSelectionTranslation(
+          [result.translation, ...(result.quality?.warnings || [])].join(
+            "\n\n",
+          ),
+        );
     } catch (e) {
       if (current === selectionRequest.current)
         setSelectionTranslation((e as Error).message);
@@ -312,6 +322,15 @@ export function Reader({
           </button>
         </div>
       </div>
+      <ReadingTools
+        key={document.id}
+        identifier={document.id}
+        page={page}
+        onLocate={(a) => {
+          setSearchHighlight(a.bbox.some((v) => v !== 0) ? a : null);
+          onPage(a.page);
+        }}
+      />
       {selection && (
         <div className="selection-translation">
           <button

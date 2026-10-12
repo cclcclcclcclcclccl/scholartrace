@@ -34,6 +34,8 @@ def initialize():
         CREATE TABLE IF NOT EXISTS tracker_hits(tracker_id TEXT NOT NULL,paper_id TEXT NOT NULL,PRIMARY KEY(tracker_id,paper_id));
         CREATE TABLE IF NOT EXISTS edge_feedback(source TEXT NOT NULL,target TEXT NOT NULL,hidden INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(source,target));
         CREATE TABLE IF NOT EXISTS note_history(id INTEGER PRIMARY KEY,note_id INTEGER NOT NULL,previous_text TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS reader_bookmarks(document_id TEXT NOT NULL REFERENCES documents(id),page INTEGER NOT NULL,label TEXT NOT NULL,PRIMARY KEY(document_id,page));
+        CREATE TABLE IF NOT EXISTS translation_history(id INTEGER PRIMARY KEY,block_id TEXT NOT NULL REFERENCES blocks(id),language TEXT NOT NULL,text TEXT NOT NULL,model TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         """)
 
 

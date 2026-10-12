@@ -7,26 +7,29 @@ import re
 import uuid
 import zipfile
 from typing import Literal
+
 import pymupdf
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, ConfigDict
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
+
 from . import (
-    store,
-    jobs,
-    parsing,
-    retrieval,
-    translation,
-    discovery,
-    research,
-    charts,
     agent,
+    audit,
+    charts,
     database,
     diagrams,
+    discovery,
     formula,
+    impact,
+    jobs,
+    parsing,
+    research,
+    retrieval,
+    store,
     tables,
+    translation,
 )
-from . import audit, impact
 
 router = APIRouter(prefix="/api")
 
@@ -103,6 +106,7 @@ class TaskPayload(BaseModel):
     paper_id: str | None = None
     tracker_id: str | None = None
     bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    fields: list[str] = Field(default_factory=list, max_length=6)
 
 
 class TaskRequest(BaseModel):
@@ -121,6 +125,7 @@ class TaskRequest(BaseModel):
         "diagram",
         "formula",
         "table",
+        "matrix",
     ]
     payload: TaskPayload
 
@@ -128,6 +133,12 @@ class TaskRequest(BaseModel):
 @router.post("/jobs")
 async def create_job(body: TaskRequest):
     payload = body.payload.model_dump(exclude_none=True)
+    if body.kind == "matrix" and (
+        not 1 <= len(payload["document_ids"]) <= 6
+        or not payload["fields"]
+        or any(not f.strip() or len(f) > 180 for f in payload["fields"])
+    ):
+        raise ValueError("请选择 1—6 篇文献并填写 1—6 个核对问题，每题最多 180 字")
     if body.kind in {
         "parse",
         "ocr",
@@ -475,7 +486,11 @@ class TextTranslation(BaseModel):
 
 @router.post("/translate/text")
 async def translate_text(body: TextTranslation):
-    return {"translation": await translation.translate_text(body.text, body.language)}
+    result = await translation.translate_text(body.text, body.language)
+    return {
+        "translation": result,
+        "quality": translation.quality_signals(body.text, result, body.language),
+    }
 
 
 @router.get("/documents/{identifier}/translation")
@@ -505,11 +520,17 @@ class SearchPapers(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     source: Literal["arxiv", "crossref"] = "arxiv"
     latest: bool = False
+    start: int = Field(default=0, ge=0, le=9900)
+    year_from: int | None = Field(default=None, ge=1900, le=2100)
+    year_to: int | None = Field(default=None, ge=1900, le=2100)
+    force: bool = False
 
 
 @router.post("/discover/search")
 async def discover(body: SearchPapers):
-    return await discovery.search(body.query, body.source, latest=body.latest)
+    if body.year_from and body.year_to and body.year_from > body.year_to:
+        raise ValueError("起始年份不能晚于结束年份")
+    return await discovery.search_cached(**body.model_dump())
 
 
 @router.get("/discover/recommendations")
@@ -645,9 +666,11 @@ class Chart(BaseModel):
     csv: str = Field(min_length=1, max_length=2_000_000)
     x: str = Field(min_length=1, max_length=150)
     ys: list[str] = Field(min_length=1, max_length=6)
-    kind: Literal["line", "bar", "table", "radar3d"]
+    kind: Literal["line", "bar", "table", "radar3d", "scatter"]
     title: str = Field(default="", max_length=200)
     unit: str = Field(default="Value", max_length=100)
+    xscale: Literal["linear", "log"] = "linear"
+    yscale: Literal["linear", "log"] = "linear"
 
 
 @router.post("/charts")

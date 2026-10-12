@@ -3,13 +3,14 @@
 import asyncio
 import datetime as dt
 import json
+import hashlib
 import re
 import uuid
 from collections import Counter
 from urllib.parse import urlparse
 import httpx
 from defusedxml import ElementTree as ET
-from . import jobs, store
+from . import database, jobs, store
 
 NS = {"a": "http://www.w3.org/2005/Atom", "ar": "http://arxiv.org/schemas/atom"}
 HEADERS = {"User-Agent": "ScholarTrace/0.2 (local academic research assistant)"}
@@ -31,9 +32,14 @@ def feedback_scores():
         return {r[0]: r[1] for r in conn.execute("SELECT paper_id,vote FROM feedback")}
 
 
-async def search(query, source="arxiv", limit=12, latest=False, start=0):
+async def search(
+    query, source="arxiv", limit=12, latest=False, start=0, year_from=None, year_to=None
+):
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
         raise ValueError("搜索词须为 1—500 字符")
+    if year_from and year_to and year_from > year_to:
+        raise ValueError("起始年份不能晚于结束年份")
+    start = max(0, min(int(start), 9900))
     limit = max(1, min(int(limit), 100))
     papers = []
     async with httpx.AsyncClient(
@@ -54,6 +60,12 @@ async def search(query, source="arxiv", limit=12, latest=False, start=0):
                     "sortBy": "lastUpdatedDate" if latest else "relevance",
                     "sortOrder": "descending",
                 }
+                if year_from or year_to:
+                    params["search_query"] = (
+                        "("
+                        + params["search_query"]
+                        + f") AND submittedDate:[{year_from or 1900}01010000 TO {year_to or dt.datetime.now().year}12312359]"
+                    )
                 for attempt in range(3):
                     response = await client.get(
                         "https://export.arxiv.org/api/query", params=params
@@ -102,16 +114,26 @@ async def search(query, source="arxiv", limit=12, latest=False, start=0):
                         "pdf_url": "https://arxiv.org/pdf/" + identifier,
                         "source": "arXiv",
                         "arxiv_id": identifier,
-                        "github": [link.rstrip(".") for link in re.findall(
-                            r"https://github\.com/[\w.-]+/[\w.-]+", abstract
-                        )],
+                        "github": [
+                            link.rstrip(".")
+                            for link in re.findall(
+                                r"https://github\.com/[\w.-]+/[\w.-]+", abstract
+                            )
+                        ],
                     }
                 )
         elif source == "crossref":
-            response = await client.get(
-                "https://api.crossref.org/works",
-                params={"query.bibliographic": query, "rows": limit},
-            )
+            params = {"query.bibliographic": query, "rows": limit, "offset": start}
+            filters = []
+            if year_from:
+                filters.append(f"from-pub-date:{year_from}-01-01")
+            if year_to:
+                filters.append(f"until-pub-date:{year_to}-12-31")
+            if filters:
+                params["filter"] = ",".join(filters)
+            if latest:
+                params.update(sort="published", order="desc")
+            response = await client.get("https://api.crossref.org/works", params=params)
             response.raise_for_status()
             for item in response.json()["message"]["items"]:
                 doi = item.get("DOI", "")
@@ -142,6 +164,55 @@ async def search(query, source="arxiv", limit=12, latest=False, start=0):
     # Stable provider ranking within each preference group; no invented relevance score.
     papers.sort(key=lambda p: p["vote"], reverse=True)
     return persist(papers)
+
+
+async def search_cached(
+    query,
+    source="arxiv",
+    *,
+    latest=False,
+    start=0,
+    year_from=None,
+    year_to=None,
+    force=False,
+):
+    """Account-local query cache for interactive search only; trackers always fetch live."""
+    args = dict(
+        query=query.strip(),
+        source=source,
+        latest=latest,
+        start=start,
+        year_from=year_from,
+        year_to=year_to,
+    )
+    key = (
+        "discovery_cache:"
+        + hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()
+    )
+    cached = database.preference(key, None)
+    now = dt.datetime.now(dt.timezone.utc)
+    status = "live"
+    if cached and not force and (now - timestamp(cached["at"])).total_seconds() < 600:
+        papers, status = cached["papers"], "cache"
+    else:
+        try:
+            papers = await search(**args)
+            cached = {"at": now.isoformat(), "papers": papers}
+            database.set_preference(key, cached)
+        except httpx.HTTPError:
+            if not cached or not cached["papers"]:
+                raise
+            papers, status = cached["papers"], "stale_after_error"
+    votes = feedback_scores()
+    return [
+        {
+            **p,
+            "vote": votes.get(p["id"], 0),
+            "retrieval_status": status,
+            "retrieved_at": cached["at"],
+        }
+        for p in papers
+    ]
 
 
 def remote(identifier):

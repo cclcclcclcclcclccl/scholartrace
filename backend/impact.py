@@ -62,7 +62,7 @@ async def impact(ctx, payload):
         items = [
             dict(r)
             for r in conn.execute(
-                "SELECT * FROM artifacts WHERE kind IN ('answer','review','writing','future','agent') ORDER BY created_at DESC"
+                "SELECT * FROM artifacts WHERE kind IN ('answer','review','writing','future','agent','matrix') ORDER BY created_at DESC"
             )
         ]
     dependencies = []
@@ -103,7 +103,7 @@ async def impact(ctx, payload):
             "impact": results,
             "total_dependencies": len(dependencies),
             "checked": len(results),
-            "notice": "复核保存过的综述、方案与 Agent 成果中的引用依赖。历史成果不改写；一次最多核验 30 条，模型含义判断仍需人工确认。",
+            "notice": "复核保存过的回答、证据矩阵、综述、方案与 Agent 成果中的引用依赖。人工编辑稿尚未建立逐句依赖，不在自动核验范围。历史成果不改写；一次最多核验 30 条，模型含义判断仍需人工确认。",
         },
     )
 
