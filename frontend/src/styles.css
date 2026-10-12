@@ -1491,3 +1491,5 @@ h1 {
     padding: 7px 10px;
   }
 }
+
+.selection-translation{padding:12px 20px;background:#eaf1e6;border-bottom:1px solid #cfdbcc;display:flex;gap:12px;flex-wrap:wrap;font-size:12px;max-height:240px;overflow:auto}.selection-translation button{font-weight:600;color:#245a48}.selection-translation span{flex:1;min-width:100px}.selection-translation p{width:100%;white-space:pre-wrap;line-height:1.8;margin:4px 0}

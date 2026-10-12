@@ -4,10 +4,11 @@ import path from 'node:path';
 import { root, logs, python, delay, portOpen, ownedProcess } from './runtime.mjs';
 
 mkdirSync(logs, { recursive: true });
+if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.env'));
 writeFileSync(path.join(logs, 'supervisor.process.json'), JSON.stringify({ pid: process.pid, executable: process.execPath, startedAt: Date.now() }));
 const services = [
   { name: 'server', port: 8765, executable: python, args: ['-X', 'utf8', '-m', 'uvicorn', 'backend.app:app', '--host', '127.0.0.1', '--port', '8765'] },
-  { name: 'model', port: 8081, executable: path.join(root, 'tools/llama/llama-server.exe'), args: ['-m', path.join(root, 'models/Qwen3-4B-Q4_K_M.gguf'), '--host', '127.0.0.1', '--port', '8081', '-ngl', '99', '-c', '8192', '-np', '1', '-t', '8', '--jinja'] },
+  { name: 'model', port: 8081, executable: path.join(root, 'tools/llama/llama-server.exe'), args: ['-m', path.join(root, 'models/Qwen3-4B-Q4_K_M.gguf'), '--host', '127.0.0.1', '--port', '8081', '-ngl', '99', '-c', '8192', '-b', '512', '-ub', '128', '-np', '1', '-t', '8', '--jinja'] },
 ].map(item => ({ ...item, child: null, failures: 0, nextAttempt: 0, started: 0 }));
 const log = message => console.log(new Date().toISOString() + ' ' + message);
 let stopping = false;

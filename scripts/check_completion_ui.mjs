@@ -1,0 +1,71 @@
+import { createRequire } from 'node:module';
+import { writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.CODEX_BROWSER_MODULE || 'C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const page = await browser.newPage({ viewport: {width: 1512, height: 1080} });
+const errors = []; page.on('pageerror', e => errors.push(String(e)));
+const report = {checks: [], errors};
+try {
+  await page.goto('http://127.0.0.1:8765');
+  if(await page.getByRole('dialog').count()) await page.keyboard.press('Escape');
+  await page.getByRole('textbox', {name: '筛选文献'}).fill('1706.03762v1.pdf');
+  await page.locator('.document-item').first().click();
+  await page.getByRole('button', {name:'双语与引文',exact:true}).click();
+  await page.locator('.bilingual-scroll').first().locator('[data-block]').nth(3).waitFor();
+  const scrollTest = async (side, fraction) => {
+    await page.locator('.bilingual-scroll').nth(side).evaluate((el,f) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*f;},fraction);
+    await page.waitForTimeout(300);
+    const ids = await page.locator('.bilingual-scroll').evaluateAll(elements => elements.map(el => [...el.querySelectorAll('[data-block]')].find(b => b.getBoundingClientRect().bottom > el.getBoundingClientRect().top + 5)?.dataset.block));
+    assert.equal(ids[0],ids[1], `Paragraph sync from pane ${side}`);
+  };
+  await scrollTest(0, 0.4); await scrollTest(1, 0.2);
+  report.checks.push('Both translation panes synchronize by source paragraph');
+  await page.screenshot({path:'artifacts/full-workbench/bilingual.png',fullPage:true});
+  await page.getByRole('button',{name:'文献管理',exact:true}).click();
+  await page.getByRole('button',{name:'查看结构与版本',exact:true}).click();
+  await page.getByRole('button',{name:'对照全文变化',exact:true}).first().click();
+  await page.locator('.version-diff details').first().waitFor();
+  await page.locator('.version-diff details summary').first().click();
+  assert.ok(await page.locator('.diff-columns button').count() > 0);
+  await page.screenshot({path:'artifacts/full-workbench/version-diff.png',fullPage:true});
+  report.checks.push('Version diff shows both sources and clickable page anchors');
+  await page.getByRole('button',{name:'科研工作室',exact:true}).click();
+  await page.getByLabel('研究目标').fill('文献导入、段落解析、混合检索、引文核验、有出处的回答，按此顺序生成研究助手流程图。');
+  await page.getByRole('button',{name:'按研究目标生成图稿',exact:true}).click();
+  await page.locator('.diagram-preview svg').waitFor({timeout:120000});
+  assert.match(await page.getByLabel('Mermaid 图脚本').inputValue(), /flowchart/);
+  await page.screenshot({path:'artifacts/full-workbench/generated-diagram.png',fullPage:true});
+  report.checks.push('Real model generates a graph that Mermaid parses and renders');
+  await page.getByRole('button',{name:'任务与成果',exact:true}).click();
+  await page.locator('.artifact-list button').first().click();
+  await page.locator('.artifact-result .diagram-preview svg').waitFor({timeout:30000});
+  report.checks.push('Saved model-generated diagram reopens with SVG preview and export');
+  await page.getByRole('button',{name:/^文献阅读台/}).click();
+  const jump = page.getByRole('spinbutton',{name:'当前页码'});
+  await jump.fill('2'); await jump.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.textLayer')?.textContent.includes('Transformer'));
+  const span = page.locator('.textLayer span').filter({hasText:/\[\d/}).first();
+  await span.scrollIntoViewIfNeeded();
+  const point = await span.evaluate(el => {
+    const text=el.firstChild, match=text.textContent.match(/\[\d/);
+    const range=document.createRange();range.setStart(text,match.index+1);range.setEnd(text,match.index+2);
+    const box=range.getBoundingClientRect(); return {x:box.x+box.width/2,y:box.y+box.height/2};
+  });
+  await page.mouse.click(point.x,point.y);
+  await page.getByRole('button',{name:/前往参考文献 · 第/}).waitFor();
+  await page.getByRole('button',{name:/前往参考文献 · 第/}).click();
+  await page.getByRole('button',{name:/返回引用位置 · 第/}).click();
+  assert.equal(await jump.inputValue(),'2');
+  report.checks.push('Clicking an actual PDF citation opens its reference and returns to page 2');
+  await page.waitForFunction(() => document.querySelector('.paper-stage')?.getAttribute('aria-busy') === 'false');
+  await page.locator('.textLayer span').filter({hasText:'In this work we propose'}).first().evaluate(el => {
+    const range=document.createRange();range.selectNodeContents(el);const s=window.getSelection();s.removeAllRanges();s.addRange(range);document.dispatchEvent(new Event('selectionchange'));
+  });
+  await page.getByRole('button',{name:'翻译选中文本',exact:true}).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.selection-translation p')].some(p => /[\u4e00-\u9fff]/.test(p.textContent)),{timeout:90000});
+  report.checks.push('Selected real PDF text translated by the local model');
+  assert.deepEqual(errors,[]);
+} catch(e) {report.failure=String(e);process.exitCode=1;await page.screenshot({path:'artifacts/full-workbench/completion-ui-failure.png',fullPage:true});}
+finally {await writeFile('artifacts/full-workbench/completion-ui-report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));await browser.close();}

@@ -1,0 +1,14 @@
+{
+  "description": "First fixed independent phrasing check after development. Source labels were read before calling the app. Small agent-authored set, not official acceptance and not human-reviewed accuracy.",
+  "created_at": "2026-10-12",
+  "cases": [
+    {"id":"warmup","file":"1706.03762v1.pdf","question":"原论文的学习率预热阶段持续多少个训练步？之后学习率怎样变化？","source_block":"b32f0516ff243ae2920a2e8e","expected":"4000; inverse square root of step number","required_patterns":["4000","平方根|square root"]},
+    {"id":"label_smoothing","file":"1706.03762v1.pdf","question":"作者用了多大的标签平滑系数？这对困惑度和 BLEU 分别有什么影响？","source_block":"0e8e41cdab79517355b79981","expected":"0.1; hurts perplexity, improves accuracy and BLEU","required_patterns":["0\\.1","困惑|perplex","BLEU"]},
+    {"id":"tied_weights","file":"1706.03762v1.pdf","question":"输入嵌入、输出嵌入和 softmax 前的线性变换是否使用相同权重矩阵？","source_block":"4512687a6871e326e423c1b8","expected":"same weight matrix shared by two embedding layers and pre-softmax linear transformation","required_patterns":["共享|相同|share","softmax"]},
+    {"id":"bert_sizes","file":"N19-1423.pdf","question":"BERT 的 BASE 与 LARGE 两种模型分别有多少层、隐藏宽度、注意力头和总参数？","source_block":"e4c514e7679fdb7e75544966","expected":"BASE L12 H768 A12 110M; LARGE L24 H1024 A16 340M","required_patterns":["12","768","110|1\\.1","24","1024","16","340|3\\.4"]},
+    {"id":"bert_corpus","file":"N19-1423.pdf","question":"BERT 预训练所用 BooksCorpus 和英语维基百科分别有多大词数？","source_block":"aa90ce7ed15ca450fb0ce060","expected":"BooksCorpus 800M; English Wikipedia 2500M words","required_patterns":["800|8\\s*亿","2,?500|25\\s*亿"]},
+    {"id":"bert_mask","file":"N19-1423.pdf","question":"BERT 选中一个词元做预测之后，有哪三种替换方式，各占多少比例？","source_block":"289f208727794e156245f9ea","expected":"80% MASK, 10% random token, 10% unchanged; applies to selected 15% positions","required_patterns":["80","10","随机|random","不变|原词|unchanged|保留"]},
+    {"id":"missing_energy","file":"1706.03762v1.pdf","question":"这篇论文报告完整训练一共消耗多少千瓦时电能？请给出论文中的实测总用电量。","expected":"No supported measured total energy; refuse to invent","unanswerable":true},
+    {"id":"missing_team_count","file":"N19-1423.pdf","question":"这篇论文明确报告作者团队一共有多少名本科实习生参与标注？","expected":"No supported intern count; refuse to invent","unanswerable":true}
+  ]
+}

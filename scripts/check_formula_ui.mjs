@@ -1,0 +1,48 @@
+import {createRequire} from 'node:module';
+import {writeFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const {chromium}=createRequire(import.meta.url)(process.env.CODEX_BROWSER_MODULE || 'C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const page=await browser.newPage({viewport:{width:1512,height:1080}});
+const report={checks:[],errors:[]};page.on('pageerror',e=>report.errors.push(String(e)));
+try{
+  await page.goto('http://127.0.0.1:8765');
+  if(await page.getByRole('dialog').count())await page.keyboard.press('Escape');
+  await page.getByRole('textbox',{name:'筛选文献'}).fill('1706.03762v1.pdf');
+  await page.locator('.document-item').first().click();
+  await page.getByRole('button',{name:'文献管理',exact:true}).click();
+  const jump=page.getByRole('spinbutton',{name:'当前页码'});
+  await jump.fill('3');await jump.press('Enter');
+  await page.getByRole('button',{name:'公式候选 1',exact:true}).click();
+  await page.getByRole('button',{name:'识别所选公式',exact:true}).click();
+  await page.locator('.formula-result .katex').waitFor({timeout:90000});
+  const formula=await page.getByLabel('公式 LaTeX').inputValue();
+  assert.match(formula,/frac/);assert.match(formula,/sqrt/);assert.match(formula,/softmax/);
+  report.native_formula=formula;report.checks.push('Automatic PDF formula crop recognized with fraction, square root and transpose');
+  await page.getByRole('button',{name:'保存公式修改',exact:true}).click();
+  await page.getByText('修改已保存，原始识别结果仍保留。').waitFor();
+  await page.locator('.formula-result').screenshot({path:'artifacts/full-workbench/formula-native.png'});
+  await page.getByRole('button',{name:'任务与成果',exact:true}).click();
+  await page.locator('.artifact-list button').first().click();
+  await page.locator('.formula-result .katex').waitFor();
+  assert.equal(await page.getByLabel('公式 LaTeX').inputValue(),formula);
+  report.checks.push('Recognized formula persists and reopens with source image and editable LaTeX');
+  await page.getByRole('button',{name:'文献管理',exact:true}).click();
+  const docs=await (await page.request.get('http://127.0.0.1:8765/api/documents')).json();
+  const scan=docs.find(d=>d.name==='1706.03762v1_img.pdf');assert.ok(scan);
+  await page.getByLabel('工作文献').selectOption(scan.id);
+  await page.getByRole('spinbutton',{name:'当前页码'}).fill('3');await page.getByRole('spinbutton',{name:'当前页码'}).press('Enter');
+  const surface=page.locator('.formula-select');await surface.scrollIntoViewIfNeeded();
+  await page.waitForFunction(()=>{const i=document.querySelector('.formula-select img');return i?.complete&&i.naturalWidth>100;});
+  const bounds=await surface.boundingBox();
+  await page.mouse.move(bounds.x+bounds.width*.35,bounds.y+bounds.height*.875);
+  await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.655,bounds.y+bounds.height*.93,{steps:8});await page.mouse.up();
+  await page.getByRole('button',{name:'识别所选公式',exact:true}).click();
+  await page.locator('.formula-result .katex').waitFor({timeout:90000});
+  report.scan_formula=await page.getByLabel('公式 LaTeX').inputValue();
+  assert.match(report.scan_formula,/frac/);assert.match(report.scan_formula,/softmax/);
+  await page.locator('.formula-result').screenshot({path:'artifacts/full-workbench/formula-scan.png'});
+  report.checks.push('Manual drag selection of scanned PDF formula recognized offline');
+  assert.deepEqual(report.errors,[]);
+}catch(e){report.failure=String(e);process.exitCode=1;await page.screenshot({path:'artifacts/full-workbench/formula-failure.png',fullPage:true});}
+finally{await writeFile('artifacts/full-workbench/formula-report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));await browser.close();}

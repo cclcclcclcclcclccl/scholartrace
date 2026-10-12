@@ -1,4 +1,5 @@
 """Real competition corpus integration checks, with isolated temporary databases."""
+
 from pathlib import Path
 import shutil
 
@@ -45,7 +46,11 @@ def test_retrieval_has_real_gpu_evidence_and_geometry(corpus):
     first, newer = corpus
     results = store.search("训练用了哪些 GPU？", [first["id"]])
     assert results
-    assert any("P100" in block["text"] and ("eight" in block["text"].lower() or "8 NVIDIA" in block["text"]) for block in results)
+    assert any(
+        "P100" in block["text"]
+        and ("eight" in block["text"].lower() or "8 NVIDIA" in block["text"])
+        for block in results
+    )
     assert all(b["document_id"] == first["id"] for b in results)
     for block in results:
         x0, y0, x1, y1 = block["bbox"]
@@ -64,7 +69,13 @@ def test_unrelated_query_does_not_get_a_fabricated_answer(corpus):
     first, _ = corpus
     assert not store.search("zxqvnonexistentquantumplatypus", [first["id"]])
     with TestClient(app) as client:
-        response = client.post("/api/ask", json={"question": "zxqvnonexistentquantumplatypus", "document_ids": [first["id"]]})
+        response = client.post(
+            "/api/ask",
+            json={
+                "question": "zxqvnonexistentquantumplatypus",
+                "document_ids": [first["id"]],
+            },
+        )
     assert response.status_code == 200
     assert response.json()["model_answer"] is None
     assert response.json()["evidence"] == []
@@ -72,13 +83,19 @@ def test_unrelated_query_does_not_get_a_fabricated_answer(corpus):
 
 def test_persistent_note_and_version_review_preserve_original(corpus):
     first, newer = corpus
-    block = next(b for b in store.search("Adam optimizer", [first["id"]]) if "Adam" in b["text"])
+    block = next(
+        b for b in store.search("Adam optimizer", [first["id"]]) if "Adam" in b["text"]
+    )
     note = audit.save_note(block["id"], "核对优化器参数")
     before = note["quote"]
     reviewed = audit.audit_against(newer["id"])
     assert len(reviewed["results"]) == 1
     assert reviewed["results"][0]["note"]["quote"] == before
-    assert reviewed["results"][0]["status"] in {"retained", "review_required", "unlocated"}
+    assert reviewed["results"][0]["status"] in {
+        "retained",
+        "review_required",
+        "unlocated",
+    }
     assert audit.notes()[0]["quote"] == before
     assert audit.notes()[0]["document_id"] == first["id"]
 
@@ -93,10 +110,27 @@ def test_no_cross_paper_audit(corpus):
 
 def test_invalid_upload_and_missing_source(corpus):
     with TestClient(app) as client:
-        assert client.post("/api/documents", files={"file": ("fake.pdf", b"not a pdf", "application/pdf")}).status_code == 400
+        assert (
+            client.post(
+                "/api/documents",
+                files={"file": ("fake.pdf", b"not a pdf", "application/pdf")},
+            ).status_code
+            == 400
+        )
         assert client.get("/api/documents/no-such-document/pdf").status_code == 404
-        assert client.post("/api/notes", json={"block_id": "missing", "note": "test"}).status_code == 404
-        assert client.post("/api/search", json={"question": "anything", "document_ids": ["missing"]}).status_code == 404
+        assert (
+            client.post(
+                "/api/notes", json={"block_id": "missing", "note": "test"}
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                "/api/search",
+                json={"question": "anything", "document_ids": ["missing"]},
+            ).status_code
+            == 404
+        )
 
 
 def test_pdf_worker_has_executable_javascript_mime(corpus):
@@ -107,4 +141,7 @@ def test_pdf_worker_has_executable_javascript_mime(corpus):
     with TestClient(app) as client:
         response = client.get("/assets/" + workers[0].name)
     assert response.status_code == 200
-    assert response.headers["content-type"].split(";")[0] in {"text/javascript", "application/javascript"}
+    assert response.headers["content-type"].split(";")[0] in {
+        "text/javascript",
+        "application/javascript",
+    }

@@ -1,0 +1,23 @@
+services:
+  model:
+    build:
+      context: .
+      dockerfile: Dockerfile.model
+    command: ["-m", "/models/Qwen3-4B-Q4_K_M.gguf", "--host", "127.0.0.1", "--port", "8081", "-c", "8192", "-np", "1", "-t", "8", "--jinja"]
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "127.0.0.1:8765:8765"
+    restart: unless-stopped
+  app:
+    build: .
+    network_mode: "service:model"
+    depends_on:
+      - model
+    environment:
+      SCHOLARTRACE_MODEL_URL: http://127.0.0.1:8081/v1
+      SCHOLARTRACE_PUBLIC: "0"
+    volumes:
+      - ./data-container:/app/data
+      - ./models:/app/models:ro
+    restart: unless-stopped

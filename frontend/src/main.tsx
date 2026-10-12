@@ -21,6 +21,8 @@ import {
   X,
 } from "lucide-react";
 import { Reader } from "./Reader";
+import { Workbench, workViews, type WorkView } from "./Workbench";
+import { request, type Anchor } from "./workspaceApi";
 import { readSession, savedPage, rememberPage } from "./session";
 import { useService } from "./useService";
 import { PageJump } from "./PageJump";
@@ -84,6 +86,14 @@ type AuditItem = {
   };
 };
 type Answer = {
+  limitations?: string;
+  comparison?: {
+    document_id: string;
+    title: string;
+    name: string;
+    status: string;
+    claims: { text: string; quote: string; block_id: string }[];
+  }[];
   evidence: Block[];
   message: string;
   mode: string;
@@ -135,8 +145,15 @@ function App() {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [busy, setBusy] = useState(false);
   const [highlight, setHighlight] = useState<Block | null>(null);
-  const [view, setView] = useState<"reader" | "notes" | "audit">("reader");
+  const [view, setView] = useState<"reader" | "notes" | "audit" | WorkView>(
+    "reader",
+  );
+  const [scope, setScope] = useState("current");
+  const [scopeIds, setScopeIds] = useState<string[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [editingNote, setEditingNote] = useState<number | null>(null);
+  const [editedNote, setEditedNote] = useState("");
+  const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
   const [auditResults, setAuditResults] = useState<AuditItem[] | null>(null);
   const [targetId, setTargetId] = useState("");
   const {
@@ -171,7 +188,7 @@ function App() {
     activeRequest.current = null;
     setBusy(false);
   }
-  function changeView(next: "reader" | "notes" | "audit") {
+  function changeView(next: "reader" | "notes" | "audit" | WorkView) {
     if (next !== view) cancelWaiting();
     setView(next);
   }
@@ -247,6 +264,16 @@ function App() {
       rememberPage(doc.id, block.page);
       setHighlight({ ...block });
       setView("reader");
+    } else {
+      void api<Document>(`/api/documents/${block.document_id}`)
+        .then((record) => {
+          setSelected(record);
+          setPage(block.page);
+          setHighlight({ ...block });
+          setView("reader");
+          rememberPage(record.id, block.page);
+        })
+        .catch((e) => setError((e as Error).message));
     }
   }
   async function locateNote(note: Note) {
@@ -266,6 +293,7 @@ function App() {
       !value.trim() ||
       busy ||
       activeRequest.current ||
+      (scope === "multiple" && scopeIds.length === 0) ||
       serviceStatus !== "online"
     )
       return;
@@ -280,7 +308,12 @@ function App() {
         "/api/ask",
         {
           question: value,
-          document_ids: [selected.id],
+          document_ids:
+            scope === "all"
+              ? []
+              : scope === "multiple"
+                ? scopeIds
+                : [selected.id],
         },
         AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
       );
@@ -407,6 +440,16 @@ function App() {
             <GitCompareArrows size={17} />
             版本复核
           </button>
+          {workViews.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              className={view === id ? "active" : ""}
+              onClick={() => changeView(id)}
+            >
+              <Icon size={17} />
+              {label}
+            </button>
+          ))}
         </nav>
         <div className="library-heading">
           <span>文献库</span>
@@ -460,7 +503,12 @@ function App() {
         <div className="sidebar-footer">
           <div className="avatar">蔡</div>
           <div>
-            <strong>蔡晨霖的研究空间</strong>
+            <button
+              className="account-link"
+              onClick={() => changeView("account")}
+            >
+              研究空间与账号
+            </button>
             <small>证据留在本机</small>
           </div>
           <ShieldCheck size={17} />
@@ -473,9 +521,18 @@ function App() {
             <ChevronRight size={14} />
             <strong>
               {
-                { reader: "文献阅读台", notes: "证据笔记", audit: "版本复核" }[
-                  view
-                ]
+                {
+                  reader: "文献阅读台",
+                  notes: "证据笔记",
+                  audit: "版本复核",
+                  library: "文献管理",
+                  translate: "双语与引文",
+                  discover: "论文发现",
+                  graph: "引用图谱",
+                  studio: "科研工作室",
+                  tasks: "任务与成果",
+                  account: "研究空间与账号",
+                }[view]
               }
             </strong>
           </div>
@@ -545,6 +602,19 @@ function App() {
             {toast}
           </div>
         )}
+        {workViews.some((v) => v.id === view) || view === "account" ? (
+          <Workbench
+            key={view}
+            view={view as WorkView}
+            papers={documents}
+            selected={selected}
+            onRefresh={refresh}
+            onTasks={() => changeView("tasks")}
+            onLocate={(a: Anchor) =>
+              locate({ ...a, id: a.id || a.block_id || "", text: a.text || "" })
+            }
+          />
+        ) : null}
         {view === "reader" && (
           <>
             <section className="intro">
@@ -664,11 +734,56 @@ function App() {
                   <div>
                     <h2>与证据对话</h2>
                     <p>
-                      范围：当前论文
-                      {selected?.version ? ` · v${selected.version}` : ""}
+                      范围：
+                      {scope === "all"
+                        ? "全库文献"
+                        : scope === "multiple"
+                          ? `已选 ${scopeIds.length} 篇`
+                          : `当前论文${selected?.version ? ` · v${selected.version}` : ""}`}
                     </p>
                   </div>
                   <HelpButton topic="ask" onOpen={openHelp} />
+                </div>
+                <div className="scope-control">
+                  <label htmlFor="ask-scope">检索范围</label>
+                  <select
+                    id="ask-scope"
+                    value={scope}
+                    onChange={(e) => {
+                      cancelWaiting();
+                      setScope(e.target.value);
+                      setAnswer(null);
+                    }}
+                  >
+                    <option value="current">当前论文</option>
+                    <option value="multiple">选择多篇</option>
+                    <option value="all">全部文献</option>
+                  </select>
+                  {scope === "multiple" && (
+                    <details className="scope-papers">
+                      <summary>
+                        选择参与对照的论文（已选 {scopeIds.length}）
+                      </summary>
+                      {documents.map((d) => (
+                        <label key={d.id}>
+                          <input
+                            type="checkbox"
+                            checked={scopeIds.includes(d.id)}
+                            onChange={(e) => {
+                              cancelWaiting();
+                              setScopeIds(
+                                e.target.checked
+                                  ? [...scopeIds, d.id]
+                                  : scopeIds.filter((id) => id !== d.id),
+                              );
+                              setAnswer(null);
+                            }}
+                          />
+                          {d.title} · {d.version ? `v${d.version}` : d.name}
+                        </label>
+                      ))}
+                    </details>
+                  )}
                 </div>
                 <form
                   className="question-box"
@@ -806,7 +921,51 @@ function App() {
                       </strong>
                       <span>{answer.evidence.length} 条</span>
                     </div>
-                    {answer.model_answer?.map((claim, i) => (
+                    {!!answer.comparison?.length && (
+                      <div className="table-scroll comparison-table">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>论文</th>
+                              <th>针对问题的证据</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {answer.comparison.map((row) => (
+                              <tr key={row.document_id}>
+                                <th>
+                                  {row.title}
+                                  <small>{row.name}</small>
+                                </th>
+                                <td>
+                                  {row.claims.length
+                                    ? row.claims.map((c, i) => (
+                                        <div key={i}>
+                                          <p>{c.text}</p>
+                                          <button
+                                            onClick={() => {
+                                              const b = answer.evidence.find(
+                                                (b) => b.id === c.block_id,
+                                              );
+                                              if (b) locate(b);
+                                            }}
+                                          >
+                                            核对本篇原文
+                                          </button>
+                                        </div>
+                                      ))
+                                    : row.status}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {(!answer.comparison?.length
+                      ? answer.model_answer
+                      : []
+                    )?.map((claim, i) => (
                       <div className="claim-card" key={i}>
                         <p>{claim.text}</p>
                         <blockquote className="claim-quote">
@@ -825,6 +984,9 @@ function App() {
                       </div>
                     ))}
                     <p className="result-note">{answer.message}</p>
+                    {answer.limitations && (
+                      <p className="result-note">{answer.limitations}</p>
+                    )}
                     {answer.evidence.map((block, i) => (
                       <article
                         className={`evidence-card ${highlight?.id === block.id ? "focused" : ""}`}
@@ -901,6 +1063,48 @@ function App() {
             <p className="page-description">
               保存研究观察及其原始出处。论文更新后，历史证据仍然保留。
             </p>
+            <div className="work-row">
+              <a className="text-button" href="/api/notes-export?format=md">
+                导出 Markdown
+              </a>
+              <a className="text-button" href="/api/notes-export?format=json">
+                导出完整来源 JSON
+              </a>
+              <button
+                className="text-button"
+                onClick={() =>
+                  void request<Note[]>("/api/notes-archive")
+                    .then(setArchivedNotes)
+                    .catch((e) => setError(e.message))
+                }
+              >
+                查看已归档笔记
+              </button>
+            </div>
+            {archivedNotes.map((n) => (
+              <div className="work-row" key={n.id}>
+                <span>{n.note}</span>
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    void request(
+                      `/api/notes/${n.id}`,
+                      { archived: false },
+                      "PATCH",
+                    )
+                      .then(async () => {
+                        setArchivedNotes(
+                          archivedNotes.filter((a) => a.id !== n.id),
+                        );
+                        await refresh();
+                      })
+                      .catch((e) => setError(e.message))
+                  }
+                >
+                  恢复笔记
+                </button>
+              </div>
+            ))}
             <div className="notes-grid">
               {notes.map((note) => (
                 <article className="saved-note" key={note.id}>
@@ -911,8 +1115,64 @@ function App() {
                     </span>
                   </div>
                   <h3>{note.note}</h3>
+                  {editingNote === note.id && (
+                    <div className="note-composer">
+                      <input
+                        aria-label="编辑笔记内容"
+                        value={editedNote}
+                        maxLength={1000}
+                        onChange={(e) => setEditedNote(e.target.value)}
+                      />
+                      <button
+                        disabled={!editedNote.trim()}
+                        onClick={() =>
+                          void request(
+                            `/api/notes/${note.id}`,
+                            { note: editedNote },
+                            "PATCH",
+                          )
+                            .then(async () => {
+                              setEditingNote(null);
+                              await refresh();
+                            })
+                            .catch((e) => setError(e.message))
+                        }
+                      >
+                        保存修改
+                      </button>
+                      <button onClick={() => setEditingNote(null)}>取消</button>
+                    </div>
+                  )}
                   <blockquote>{note.quote}</blockquote>
                   <div className="note-source">{note.title}</div>
+                  <div className="work-row">
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setEditingNote(note.id);
+                        setEditedNote(note.note);
+                      }}
+                    >
+                      编辑观察
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() =>
+                        void request(
+                          `/api/notes/${note.id}`,
+                          { archived: true },
+                          "PATCH",
+                        )
+                          .then(async () => {
+                            setToast("笔记已归档，可恢复；原始引文保留");
+                            await refresh();
+                          })
+                          .catch((e) => setError(e.message))
+                      }
+                    >
+                      归档笔记
+                    </button>
+                  </div>
                   <button
                     className="text-button"
                     onClick={() => locateNote(note)}
@@ -981,6 +1241,25 @@ function App() {
                   <GitCompareArrows size={16} />
                 )}
                 检查证据变化
+              </button>
+              <button
+                className="text-button"
+                disabled={!targetId || busy}
+                onClick={() =>
+                  void request("/api/jobs", {
+                    kind: "impact",
+                    payload: { document_id: targetId },
+                  })
+                    .then(() => {
+                      setToast(
+                        "已开始检查已保存综述、方案和 Agent 成果的引用依赖",
+                      );
+                      changeView("tasks");
+                    })
+                    .catch((e) => setError(e.message))
+                }
+              >
+                复核已生成成果
               </button>
               {busy && (
                 <button className="text-button" onClick={cancelWaiting}>

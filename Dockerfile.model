@@ -1,0 +1,10 @@
+FROM debian:bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch b11552 https://github.com/ggml-org/llama.cpp /src
+RUN cmake -S /src -B /src/build -DLLAMA_CURL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON && cmake --build /src/build --target llama-server -j 2
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/build/bin/ /opt/llama/
+ENV LD_LIBRARY_PATH=/opt/llama
+USER 10001
+ENTRYPOINT ["/opt/llama/llama-server"]

@@ -3,6 +3,7 @@ import { List, LoaderCircle, Minus, Plus, RotateCcw } from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "./text-layer.css";
+import { request } from "./workspaceApi";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 type Source = {
@@ -42,6 +43,88 @@ export function Reader({
   const [outlineError, setOutlineError] = useState(false);
   const [outlineReady, setOutlineReady] = useState(false);
   const [outlineFilter, setOutlineFilter] = useState("");
+  const [selection, setSelection] = useState("");
+  const [selectionTranslation, setSelectionTranslation] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const selectionRequest = useRef(0);
+  const [citation, setCitation] = useState<{
+    number: number;
+    text: string;
+    page: number;
+    from: number;
+  } | null>(null);
+  const citationCache = useRef<{
+    id: string;
+    entries: { number: number; text: string; page: number }[];
+  } | null>(null);
+  useEffect(() => {
+    setCitation(null);
+    citationCache.current = null;
+  }, [document.id]);
+  useEffect(() => {
+    selectionRequest.current++;
+    setSelection("");
+    setSelectionTranslation("");
+    setTranslating(false);
+  }, [document.id, page]);
+  useEffect(() => {
+    const capture = () => {
+      const s = window.getSelection();
+      if (s?.anchorNode && textLayer.current?.contains(s.anchorNode)) {
+        setSelection(s.toString().trim().slice(0, 7000));
+        setSelectionTranslation("");
+      }
+    };
+    window.document.addEventListener("selectionchange", capture);
+    return () =>
+      window.document.removeEventListener("selectionchange", capture);
+  }, []);
+  async function translateSelection() {
+    const current = ++selectionRequest.current;
+    setTranslating(true);
+    try {
+      const result = await request<{ translation: string }>(
+        "/api/translate/text",
+        { text: selection, language: "zh" },
+      );
+      if (current === selectionRequest.current)
+        setSelectionTranslation(result.translation);
+    } catch (e) {
+      if (current === selectionRequest.current)
+        setSelectionTranslation((e as Error).message);
+    } finally {
+      if (current === selectionRequest.current) setTranslating(false);
+    }
+  }
+  async function followInlineCitation(event: React.MouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (!target.closest(".textLayer span")) return;
+    const dom = window.document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const range = dom.caretRangeFromPoint?.(event.clientX, event.clientY);
+    if (!range || !textLayer.current?.contains(range.startContainer)) return;
+    const text = range.startContainer.textContent || "";
+    const offset = range.startOffset;
+    const match = [
+      ...text.matchAll(/\[(\d{1,3})(?:\s*[,–-]\s*\d{1,3})*\]/g),
+    ].find((m) => offset >= m.index! && offset <= m.index! + m[0].length);
+    if (!match) return;
+    try {
+      if (citationCache.current?.id !== document.id) {
+        const result = await request<{
+          references: { number: number; text: string; page: number }[];
+        }>(`/api/documents/${document.id}/references`);
+        citationCache.current = { id: document.id, entries: result.references };
+      }
+      const entry = citationCache.current.entries.find(
+        (e) => e.number === Number(match[1]),
+      );
+      if (entry) setCitation({ ...entry, from: page });
+    } catch {
+      /* The full references panel provides a retryable path if offline. */
+    }
+  }
 
   useEffect(() => {
     const node = container.current;
@@ -85,7 +168,9 @@ export function Reader({
     setLoading(true);
     setError("");
     setPdf(null);
-    const task = pdfjs.getDocument(`/api/documents/${document.id}/pdf`);
+    const task = pdfjs.getDocument({
+      url: `/api/documents/${document.id}/pdf`,
+    });
     let cancelled = false;
     task.promise
       .then((value) => {
@@ -227,6 +312,45 @@ export function Reader({
           </button>
         </div>
       </div>
+      {selection && (
+        <div className="selection-translation">
+          <button
+            disabled={translating}
+            onClick={() => void translateSelection()}
+          >
+            {translating ? "正在翻译…" : "翻译选中文本"}
+          </button>
+          <span>
+            {selection.slice(0, 90)}
+            {selection.length > 90 ? "…" : ""}
+          </span>
+          <button
+            onClick={() => {
+              selectionRequest.current++;
+              setSelection("");
+              setSelectionTranslation("");
+              setTranslating(false);
+            }}
+          >
+            关闭
+          </button>
+          {selectionTranslation && <p>{selectionTranslation}</p>}
+        </div>
+      )}
+      {citation && (
+        <div className="selection-translation">
+          <span>
+            [{citation.number}] {citation.text}
+          </span>
+          <button onClick={() => onPage(citation.page)}>
+            前往参考文献 · 第 {citation.page} 页
+          </button>
+          <button onClick={() => onPage(citation.from)}>
+            返回引用位置 · 第 {citation.from} 页
+          </button>
+          <button onClick={() => setCitation(null)}>关闭引用</button>
+        </div>
+      )}
       {outlineOpen && (
         <nav className="paper-outline" aria-label="论文目录">
           {!!outline.length && (
@@ -287,7 +411,11 @@ export function Reader({
         )}
         <div className="paper-sheet" style={dimensions}>
           <canvas ref={canvas} style={dimensions} />
-          <div className="textLayer" ref={textLayer} />
+          <div
+            className="textLayer"
+            ref={textLayer}
+            onClick={(e) => void followInlineCitation(e)}
+          />
           {!loading &&
             highlight?.document_id === document.id &&
             highlight.page === page && (
