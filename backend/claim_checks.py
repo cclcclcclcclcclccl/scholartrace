@@ -1,6 +1,7 @@
 """Conservative, inspectable rejection rules, not a semantic accuracy score."""
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 
@@ -21,7 +22,51 @@ def semantic_overreach(claim, quote):
         quote,
         re.IGNORECASE,
     )
-    return bool(window_claim and training_source and not context_source)
+    return bool(
+        window_claim and training_source and not context_source
+    ) or negative_result_mismatch(claim, quote)
+
+
+def negative_result_mismatch(claim, quote):
+    """Reject narrow, observable swaps of a negative result's dimensional variant.
+
+    This is a conservative guard for explicit 1D/2D/3D mentions, not a general
+    semantic verifier. A claim of missing proof also needs explicit source support.
+    """
+    source = unicodedata.normalize("NFKC", quote)
+    if (
+        re.search(
+            r"we\s+(?:speculate|hypothesize|conjecture)\s+that", source, re.IGNORECASE
+        )
+        and re.search(r"由于|因为|导致|证明|因此", claim)
+        and not re.search(r"推测|猜测|假设|可能|或许|尚未|未证明", claim)
+    ):
+        return True
+    if re.search(r"(?:未|没有|并未)[^，。；]{0,18}证明", claim) and not re.search(
+        r"\bnot\b|\bno\b|without|fail|未|没有", source, re.IGNORECASE
+    ):
+        return True
+    negative = re.search(
+        r"(?:not\s+observed|no)[^.]{0,100}(?:gains?|improvements?)[^.]{0,40}(?:using|with)\s+([^.]{1,100})",
+        source,
+        re.IGNORECASE,
+    )
+    if not negative:
+        return False
+    expected = set(re.findall(r"\b[123]D\b", negative[1], re.IGNORECASE))
+    normalized = claim.replace("一维", "1D").replace("二维", "2D").replace("三维", "3D")
+    for clause in re.split(r"[，。；]", normalized):
+        if re.search(
+            r"未观察|没有观察|无.{0,8}(?:增益|提升)|未.{0,8}(?:增益|提升)", clause
+        ):
+            targets = set(re.findall(r"[123]D", clause, re.IGNORECASE))
+            if (
+                expected
+                and targets
+                and {x.upper() for x in targets} != {x.upper() for x in expected}
+            ):
+                return True
+    return False
 
 
 def duplicate_claim(text, block_id, accepted):

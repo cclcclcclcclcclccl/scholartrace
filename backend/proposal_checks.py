@@ -66,7 +66,12 @@ def assess_plan(fields):
         issues.append(
             "补齐计时预热、固定批大小与序列长度、重复次数及波动统计；GPU 计时还需同步。"
         )
-    if re.search(r"显著", evaluation) and not re.search(
+    positive_significance = any(
+        "显著" in clause
+        and not re.search(r"不(?:宣称|预设|代表|证明)|不能|不得|未证明", clause)
+        for clause in re.split(r"[，。；;\n]", evaluation)
+    )
+    if positive_significance and not re.search(
         r"置信区间|统计检验|confidence|bootstrap|p.?value", evaluation, re.IGNORECASE
     ):
         issues.append(

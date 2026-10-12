@@ -1,4 +1,9 @@
 import {
+  ExecutionResult,
+  type PreflightContent,
+  type ExecutionDraft,
+} from "./ExecutionParameters";
+import {
   ProposalRevision,
   ProtocolEditor,
   MeasurementLab,
@@ -2164,6 +2169,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
                 {{
                   protocol: "实验设计",
                   measurements: "实验统计",
+                  preflight: "执行预检",
                   matrix: "证据矩阵",
                 }[a.kind] || a.kind}
               </span>
@@ -2269,7 +2275,11 @@ function Artifact({
         />
       )}
       {proposal && (
-        <ProtocolEditor key={`protocol-from-${result.id}`} source={result.id} />
+        <ProtocolEditor
+          key={`protocol-from-${result.id}`}
+          source={result.id}
+          suggestion={c.execution_draft as ExecutionDraft | undefined}
+        />
       )}
       {result.kind === "protocol" && (
         <ProtocolEditor
@@ -2283,6 +2293,9 @@ function Artifact({
           identifier={result.id}
           content={c as MeasurementContent}
         />
+      )}
+      {result.kind === "preflight" && (
+        <ExecutionResult id={result.id} content={c as PreflightContent} />
       )}
       {proposal &&
         Object.entries(proposal).map(([k, v]) => (

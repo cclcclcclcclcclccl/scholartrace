@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from scipy.stats import t
 
 from . import charts, research, store
+from .execution_check import AttentionExecution, preflight
 
 router = APIRouter(prefix="/api/experiments")
 
@@ -39,6 +40,7 @@ class Protocol(BaseModel):
     failure: str = Field(min_length=3, max_length=1000)
     source_artifact_id: str | None = None
     document_ids: list[str] = Field(default_factory=list, max_length=20)
+    execution: AttentionExecution | None = None
 
 
 def check_protocol(spec):
@@ -88,6 +90,14 @@ def check_protocol(spec):
 def protocol_content(body):
     spec = body.model_dump()
     warnings = check_protocol(spec)
+    if body.execution:
+        if body.task != "language_modeling":
+            warnings.append(
+                "当前具体执行模板针对从零训练的注意力语言模型，请核对是否符合所选任务；不会自动改变研究方向。"
+            )
+        warnings.append(
+            "结构化参数只检查取值和维度关系，训练预算、数据许可和科学可行性仍需实测核对。"
+        )
     for identifier in spec["document_ids"]:
         store.get_document(identifier)
     source = (
@@ -140,6 +150,36 @@ def edit_protocol(identifier: str, body: ProtocolEdit):
             (body.protocol.title, json.dumps(content, ensure_ascii=False), identifier),
         )
     return {"id": identifier, "kind": "protocol", **content}
+
+
+class PreflightRequest(BaseModel):
+    revision: int = Field(ge=1)
+
+
+@router.post("/protocols/{identifier}/preflight")
+def check_execution(identifier: str, body: PreflightRequest):
+    item = research.artifact(identifier)
+    if item["kind"] != "protocol":
+        raise ValueError("请选择实验设计卡")
+    content = item["content"]
+    if body.revision != content["revision"]:
+        raise HTTPException(409, "设计卡已更新，请重新打开并保存后预检")
+    protocol = content["protocol"]
+    if not protocol.get("execution"):
+        raise ValueError("请先填写并保存结构化执行参数")
+    result = preflight(protocol["execution"], protocol["seeds"][0])
+    return research.save_artifact(
+        "preflight",
+        "执行预检 · " + item["title"],
+        {
+            **result,
+            "protocol_snapshot": {
+                "id": identifier,
+                "revision": content["revision"],
+                "protocol": protocol,
+            },
+        },
+    )
 
 
 class Measurements(BaseModel):

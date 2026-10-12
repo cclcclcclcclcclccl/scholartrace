@@ -49,7 +49,14 @@ export async function request<T>(
     throw new Error(
       typeof value.detail === "string"
         ? value.detail
-        : `请求失败 (${response.status})`,
+        : Array.isArray(value.detail)
+          ? value.detail
+              .map(
+                (item: { msg?: string; loc?: string[] }) =>
+                  `${item.loc?.slice(1).join(" · ") || "参数"}：${(item.msg || "无效取值").replace("Value error, ", "")}`,
+              )
+              .join("；")
+          : `请求失败 (${response.status})`,
     );
   }
   return response.json();

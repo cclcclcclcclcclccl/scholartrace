@@ -72,7 +72,8 @@ def attach_table_headers(blocks):
             for header in reversed(preceding):
                 labels = header["text"].splitlines()
                 if (
-                    len(labels) != len(fields)
+                    not labels
+                    or len(fields) % len(labels) != 0
                     or any(len(label) > 60 for label in labels)
                     or numeric_row(labels)
                 ):
@@ -90,14 +91,33 @@ def attach_table_headers(blocks):
                 intervening = [b for b in preceding if b["bbox"][1] > header["bbox"][1]]
                 if any(
                     not numeric_row(b["text"].splitlines())
-                    or len(b["text"].splitlines()) != len(fields)
+                    or len(b["text"].splitlines()) % len(labels) != 0
                     for b in intervening
                 ):
                     continue
                 block["source_context"] = [header]
+                rows = [
+                    fields[i : i + len(labels)]
+                    for i in range(0, len(fields), len(labels))
+                ]
+                if len(rows) > 1 and (
+                    len(labels) < 3
+                    or any(
+                        not re.search(r"[A-Za-z]", row[0])
+                        or sum(bool(re.match(r"^[+−-]?\d", v)) for v in row[1:])
+                        < (len(labels) - 1) * 0.75
+                        for row in rows
+                    )
+                ):
+                    block.pop("source_context", None)
+                    continue
                 block["table_fields"] = [
-                    {"field": label, "value": value}
-                    for label, value in zip(labels, fields)
+                    {
+                        "field": (row[0] + " · " if len(rows) > 1 else "") + label,
+                        "value": value,
+                    }
+                    for row in rows
+                    for label, value in zip(labels, row)
                 ]
                 break
         output.append(block)

@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { request } from "./workspaceApi";
+import {
+  ExecutionParameters,
+  type Execution,
+  type ExecutionDraft,
+} from "./ExecutionParameters";
 
 type Protocol = {
   title: string;
@@ -18,6 +23,7 @@ type Protocol = {
   failure: string;
   source_artifact_id: string | null;
   document_ids: string[];
+  execution?: Execution | null;
 };
 type ProtocolContent = {
   protocol: Protocol;
@@ -70,21 +76,24 @@ export function ProtocolEditor({
   content,
   documents = [],
   source,
+  suggestion,
 }: {
   identifier?: string;
   content?: ProtocolContent;
   documents?: string[];
   source?: string;
+  suggestion?: ExecutionDraft;
 }) {
   const [draft, setDraft] = useState<Protocol>(
     content?.protocol || {
       ...initial,
+      ...(suggestion || {}),
       document_ids: documents,
       source_artifact_id: source || null,
     },
   );
   const [seedText, setSeedText] = useState(
-    (content?.protocol.seeds || initial.seeds).join(", "),
+    (content?.protocol.seeds || suggestion?.seeds || initial.seeds).join(", "),
   );
   const [savedId, setSavedId] = useState(identifier || "");
   const [revision, setRevision] = useState(content?.revision || 0);
@@ -195,6 +204,12 @@ export function ProtocolEditor({
           </label>
         ))}
       </div>
+      <ExecutionParameters
+        value={draft.execution}
+        onChange={(execution) => setDraft({ ...draft, execution })}
+        savedId={savedId}
+        revision={revision}
+      />
       <button disabled={busy} onClick={() => void save()}>
         {busy ? "正在保存…" : "保存实验设计卡"}
       </button>

@@ -19,12 +19,13 @@ parser.add_argument(
     "--output", default="artifacts/quality-round2/questions-first-run.json"
 )
 parser.add_argument("--regression", action="store_true")
+parser.add_argument("--dataset", default="tests/acceptance_questions_v2.json")
 parser.add_argument("--cases", nargs="+", help="Run selected case IDs for diagnosis")
 args = parser.parse_args()
 output = ROOT / args.output
 if output.exists():
     raise SystemExit("Refusing to overwrite a previous report")
-dataset = ROOT / "tests/acceptance_questions_v2.json"
+dataset = ROOT / args.dataset
 report = {
     "selected_cases": args.cases,
     "dataset_sha256": hashlib.sha256(dataset.read_bytes()).hexdigest(),
@@ -88,6 +89,10 @@ with httpx.Client(
             and store.quote_in_source(c["quote"], real_blocks[c["block_id"]]["text"])
             for c in claims
         )
+        if case.get("forbidden_patterns"):
+            checks["no_forbidden_claims"] = not any(
+                re.search(p, text, re.IGNORECASE) for p in case["forbidden_patterns"]
+            )
         report["results"].append(
             {
                 "id": case["id"],
