@@ -34,6 +34,45 @@ def negative_result_mismatch(claim, quote):
     semantic verifier. A claim of missing proof also needs explicit source support.
     """
     source = unicodedata.normalize("NFKC", quote)
+    for maximum in re.finditer(
+        r"up\s+to\s+(\d+(?:\.\d+)?)\s*[×x]", source, re.IGNORECASE
+    ):
+        if re.search(rf"{re.escape(maximum[1])}\s*倍", claim) and not re.search(
+            r"最高|最多|至多|可达|上限|高达", claim
+        ):
+            return True
+    # Explicit hardware levels must occur in the cited passage, not just elsewhere
+    # in the model's context. This does not establish relationships between them.
+    for term in ("HBM", "SRAM"):
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){term}(?![A-Za-z0-9_])", claim, re.IGNORECASE
+        ) and not re.search(rf"\b{term}\b", source, re.IGNORECASE):
+            return True
+    if (
+        re.search(
+            r"not\s+observed|did\s+not\s+observe|have\s+not\s+found",
+            source,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"(?:没有|不会|并无|不)(?:带来|产生|存在).{0,12}(?:提升|增益|改善)", claim
+        )
+        and not re.search(r"观察|观测|发现|实验中|实验下|该设置|这些设置", claim)
+    ):
+        return True
+    if re.search(r"最优", claim) and not re.search(
+        r"optimal|optimum|最优", source, re.IGNORECASE
+    ):
+        return True
+    if re.search(r"(?:运行时间|耗时|时间复杂度).{0,35}线性", claim) and not re.search(
+        r"linear|O\s*\(\s*N\s*\)|线性", source, re.IGNORECASE
+    ):
+        return True
+    if re.search(r"(?<!不)(?:可以|能够|能)直接.{0,25}(?:混合|不同任务)", claim) and (
+        not re.search(r"batch|mix", source, re.IGNORECASE)
+        or re.search(r"not straightforward|cannot|not possible", source, re.IGNORECASE)
+    ):
+        return True
     if (
         re.search(
             r"we\s+(?:speculate|hypothesize|conjecture)\s+that", source, re.IGNORECASE

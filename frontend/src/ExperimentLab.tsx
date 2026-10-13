@@ -359,6 +359,11 @@ export function MeasurementLab() {
   const [interval, setInterval] = useState("sd");
   const [dataLabel, setDataLabel] = useState("measured");
   const [protocol, setProtocol] = useState("");
+  const [protocolRevision, setProtocolRevision] = useState("");
+  const [versionReload, setVersionReload] = useState(0);
+  const [versions, setVersions] = useState<
+    { revision: number; protocol: Protocol }[]
+  >([]);
   const [protocols, setProtocols] = useState<
     { id: string; title: string; kind: string }[]
   >([]);
@@ -374,6 +379,7 @@ export function MeasurementLab() {
           (a) => a.kind === "protocol",
         ),
       );
+      setVersionReload((value) => value + 1);
     } catch (e) {
       setNotice(String(e));
     }
@@ -381,6 +387,30 @@ export function MeasurementLab() {
   useEffect(() => {
     void refresh();
   }, []);
+  useEffect(() => {
+    let active = true;
+    setVersions([]);
+    setProtocolRevision("");
+    if (protocol)
+      void request<{ content: ProtocolContent }>(`/api/artifacts/${protocol}`)
+        .then((item) => {
+          if (!active) return;
+          setVersions([
+            {
+              revision: item.content.revision,
+              protocol: item.content.protocol,
+            },
+            ...(item.content.history || []).slice().reverse(),
+          ]);
+          setProtocolRevision(String(item.content.revision));
+        })
+        .catch((error) => {
+          if (active) setNotice(String(error));
+        });
+    return () => {
+      active = false;
+    };
+  }, [protocol, versionReload]);
   return (
     <details className="work-card measurement-lab">
       <summary>重复实验统计与误差棒</summary>
@@ -397,7 +427,7 @@ export function MeasurementLab() {
         </p>
         <p>
           标准差描述运行间波动；95% t
-          区间估计均值的不确定性，小样本和偏态时需谨慎解释。先刷新并选择实验设计，再计算保存。图表、原始
+          区间估计均值的不确定性，小样本和偏态时需谨慎解释。先刷新并选择实验设计及实际执行的版本，再计算保存。可以选择历史版本，指标和种子会按该版本核对；以后修改设计不会改写已经保存的结果。图表、原始
           CSV 和复现脚本均可下载。
         </p>
       </details>
@@ -500,11 +530,41 @@ export function MeasurementLab() {
             ))}
           </select>
         </label>
+        {protocol && (
+          <label>
+            实际执行的设计版本
+            <select
+              aria-label="实际执行的设计版本"
+              value={protocolRevision}
+              onChange={(event) => setProtocolRevision(event.target.value)}
+            >
+              <option value="" disabled>
+                正在读取版本…
+              </option>
+              {versions.map((v, i) => (
+                <option key={v.revision} value={v.revision}>
+                  第 {v.revision} 版
+                  {i === 0 ? "（读取时最新版）" : "（历史版本）"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
+      {protocol &&
+        versions
+          .filter((v) => String(v.revision) === protocolRevision)
+          .map((v) => (
+            <p className="work-notice" key={v.revision}>
+              即将绑定第 {v.revision} 版：指标 {v.protocol.metric}；独立种子{" "}
+              {v.protocol.seeds.join(", ")}；对照 {v.protocol.baseline}
+              。请选择真正执行的版本；其他页面后来修改设计不会悄悄改变本次选择。
+            </p>
+          ))}
       <button onClick={() => void refresh()}>刷新实验设计列表</button>
       <button
         className="primary-button"
-        disabled={busy || !csv.trim()}
+        disabled={busy || !csv.trim() || Boolean(protocol && !protocolRevision)}
         onClick={() =>
           void (async () => {
             setBusy(true);
@@ -522,6 +582,7 @@ export function MeasurementLab() {
                   unit,
                   interval,
                   protocol_id: protocol || null,
+                  protocol_revision: protocol ? Number(protocolRevision) : null,
                   data_label: dataLabel,
                 },
               );

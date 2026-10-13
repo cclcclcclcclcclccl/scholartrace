@@ -1,0 +1,9 @@
+{
+ "notice":"Frozen before first call on2026-10-13. Developer-authored new-paper cases, not independent evaluation. Patterns accept common Chinese and English equivalents; semantic assessment separate.",
+ "cases":[
+  {"id":"flash_exact_vs_sparse","files":["2205.14135v2.pdf"],"question":"FlashAttention 本身是否通过近似注意力换取速度？请区分原始 FlashAttention 与 block-sparse 扩展，说明主要减少的内存访问发生在哪两级存储之间。","required_patterns":["精确|exact","近似|approximate","稀疏|sparse","HBM","SRAM"],"source_blocks":["2f6debea9b099767bb335a65"],"expected":"Original exact attention; block-sparse extension approximate; reduce HBM/SRAM transfers."},
+  {"id":"lora_merge_condition","files":["2106.09685v2.pdf"],"question":"LoRA 为什么能够不增加推理延迟？部署时对权重做了什么操作？如果将不同任务的 LoRA 合并入权重，能否直接在一次前向中混合处理不同任务输入？请保留限制条件。","required_patterns":["合并|merge|W0|W₀","延迟|latency","不同任务","不|难|限制"],"source_blocks":["fdea3f40db135697933ef91b","63f849c8ecbe89396b17a053"],"expected":"Merge W=W0+BA then infer normally; after merge batching different tasks/modules in one forward is not straightforward. Not a universal zero-latency guarantee."},
+  {"id":"lora_initialization","files":["2106.09685v2.pdf"],"question":"LoRA 中低秩矩阵 A、B 分别如何初始化？为什么刚开始训练时权重更新 ΔW 为零？不要把 A、B 互换。","required_patterns":["A","B","高斯|Gaussian","零|0","BA|B.?A"],"source_blocks":["cc3a694062f5a94c2e2d77e5"],"expected":"A random Gaussian, B zero;DeltaW=BA initially zero."},
+  {"id":"gpt4_unreported_parameters","files":["2303.08774v6.pdf"],"question":"请仅依据这份 GPT-4 技术报告，给出模型精确的总参数数量（多少亿）。不能引用网络传闻，也不要用模型能力分数替代参数量。","required_patterns":[],"source_blocks":[],"unanswerable":true,"expected":"Report explicitly withholds model size; no precise parameter count available; abstain."}
+ ]
+}

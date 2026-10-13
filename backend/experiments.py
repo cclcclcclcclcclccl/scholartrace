@@ -191,6 +191,7 @@ class Measurements(BaseModel):
     unit: str = Field(default="", max_length=100)
     interval: Literal["sd", "ci95"] = "sd"
     protocol_id: str | None = None
+    protocol_revision: int | None = Field(default=None, ge=1)
     data_label: Literal["measured", "example"] = "measured"
 
 
@@ -364,21 +365,46 @@ def write_bundle(spec, result, folder):
 def analyze(body: Measurements):
     spec = body.model_dump()
     result = summarize(spec)
+    if body.protocol_revision and not body.protocol_id:
+        raise ValueError("选择实验设计版本时必须指定设计卡")
     if body.protocol_id:
         protocol = research.artifact(body.protocol_id)
         if protocol["kind"] != "protocol":
             raise ValueError("关联对象必须是实验设计卡")
         saved = protocol["content"]
+        selected_revision = body.protocol_revision or saved["revision"]
+        selected = (
+            saved["protocol"]
+            if selected_revision == saved["revision"]
+            else next(
+                (
+                    h["protocol"]
+                    for h in saved.get("history", [])
+                    if h["revision"] == selected_revision
+                ),
+                None,
+            )
+        )
+        if selected is None:
+            raise HTTPException(409, "所选实验设计版本不存在，请重新选择")
         result["protocol_snapshot"] = {
             "id": body.protocol_id,
-            "revision": saved["revision"],
-            "protocol": saved["protocol"],
+            "revision": selected_revision,
+            "protocol": selected,
         }
-        if body.metric.casefold() != saved["protocol"]["metric"].casefold():
+        if body.protocol_revision is None:
+            result["warnings"].append(
+                "未显式选择设计版本，本次使用保存统计时的最新版；核对是否与实际实验一致。"
+            )
+        if selected_revision != saved["revision"]:
+            result["warnings"].append(
+                f"本次使用历史设计第 {selected_revision} 版，当前最新版为第 {saved['revision']} 版；结果按所选历史条件保存。"
+            )
+        if body.metric.casefold() != selected["metric"].casefold():
             result["warnings"].append(
                 "CSV 指标列名与设计卡指标名称不同，请核对含义和单位。"
             )
-        expected = {str(seed) for seed in saved["protocol"]["seeds"]}
+        expected = {str(seed) for seed in selected["seeds"]}
         if any(
             {r["run"] for r in row["runs"]} != expected for row in result["summary"]
         ):

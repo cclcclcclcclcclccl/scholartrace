@@ -100,6 +100,7 @@ type Answer = {
       quote: string;
       block_id: string;
       source_context?: Block[];
+      support_span?: string;
     }[];
   }[];
   evidence: Block[];
@@ -111,6 +112,7 @@ type Answer = {
         quote: string;
         block_id: string;
         source_context?: Block[];
+        support_span?: string;
       }[]
     | null;
 };
@@ -957,6 +959,16 @@ function App() {
                                     ? row.claims.map((c, i) => (
                                         <div key={i}>
                                           <p>{c.text}</p>
+                                          {c.support_span && (
+                                            <details>
+                                              <summary>
+                                                查看支持片段（模型初判）
+                                              </summary>
+                                              <blockquote>
+                                                {c.support_span}
+                                              </blockquote>
+                                            </details>
+                                          )}
                                           <button
                                             onClick={() => {
                                               const b = answer.evidence.find(
@@ -983,6 +995,14 @@ function App() {
                     )?.map((claim, i) => (
                       <div className="claim-card" key={i}>
                         <p>{claim.text}</p>
+                        {claim.support_span && (
+                          <details>
+                            <summary>查看支持片段（模型初判）</summary>
+                            <blockquote className="claim-quote">
+                              {claim.support_span}
+                            </blockquote>
+                          </details>
+                        )}
                         <blockquote className="claim-quote">
                           {claim.quote}
                         </blockquote>
