@@ -45,6 +45,40 @@ def test_coverage_counts_only_remaining_claims():
     assert result[1]["claim_count"] == 1
 
 
+def test_coverage_retains_candidate_sources_and_explains_review_rejection():
+    parts = [
+        {
+            "id": "Q1",
+            "question": "为什么？",
+            "candidate_claim_count": 1,
+            "evidence_ids": ["b"],
+            "selected_evidence_ids": ["b"],
+        }
+    ]
+    item = subquestions.coverage(parts, [])[0]
+    assert item["status"] == "unresolved"
+    assert item["selected_evidence_ids"] == ["b"]
+    assert "未通过引用或支持性初筛" in item["reason"]
+
+
+def test_failed_review_does_not_abort_other_candidates(monkeypatch):
+    async def complete(system, prompt, **kwargs):
+        if prompt == "incomplete":
+            raise ValueError("generation exceeded budget")
+        return {"decisions": {"1": {"verdict": "supported_relevant"}}}
+
+    monkeypatch.setattr(research.model, "complete", complete)
+
+    async def run():
+        first = await research.support_review("review", "incomplete")
+        second = await research.support_review("review", "complete")
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == {"decisions": {}}
+    assert second["decisions"]["1"]["verdict"] == "supported_relevant"
+
+
 @pytest.mark.parametrize("first_failure", ["invented_id", "request_failure"])
 def test_part_failure_preserves_later_answer_and_scope(monkeypatch, first_failure):
     b = block()
@@ -225,7 +259,7 @@ def test_subquestion_keeps_three_requested_fields(monkeypatch):
     async def select(*args, **kwargs):
         return {"selected": ["S0"]}
 
-    async def answer(*args):
+    async def answer(*args, **kwargs):
         return {"claims": [{"text": f"字段{i}", "evidence_id": "E1"} for i in range(3)]}
 
     monkeypatch.setattr(subquestions.model, "complete", select)

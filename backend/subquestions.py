@@ -48,6 +48,15 @@ def coverage(parts, claims):
     return [
         {
             **part,
+            "reason": (
+                "已有回答通过初筛，仍需核对原文；不代表本项完整或正确。"
+                if any(c.get("part_id") == part["id"] for c in claims)
+                else "已找到候选回答，但未通过引用或支持性初筛；不表示论文没有答案。可查看候选原文核对。"
+                if part.get("candidate_claim_count", 0)
+                else part.get(
+                    "reason", "本轮未形成通过核验的回答；不表示论文没有答案。"
+                )
+            ),
             "claim_count": sum(c.get("part_id") == part["id"] for c in claims),
             "status": "reviewed_answer"
             if any(c.get("part_id") == part["id"] for c in claims)
@@ -139,7 +148,11 @@ async def answer_parts(parts, ids, initial_blocks, paper_title, ctx=None):
                 f"[E{i + 1}] {prompt_text(block)}" for i, block in enumerate(chosen)
             )
             generated = await single_answer(
-                part["question"], ids, chosen, paper_title, excerpt_text
+                part["question"], ids, chosen, paper_title, excerpt_text, reasoning=True
+            )
+            record["candidate_claim_count"] = 0
+            record["reason"] = (
+                "已找到候选原文，但本轮未生成可核验回答；不表示论文没有答案。"
             )
             for claim in generated.get("claims", [])[:5]:
                 if not isinstance(claim, dict):
@@ -148,6 +161,7 @@ async def answer_parts(parts, ids, initial_blocks, paper_title, ctx=None):
                 if not match or not 0 <= int(match[1]) - 1 < len(chosen):
                     continue
                 block = chosen[int(match[1]) - 1]
+                record["candidate_claim_count"] += 1
                 claims.append(
                     {
                         "text": claim.get("text"),

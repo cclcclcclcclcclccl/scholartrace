@@ -5,6 +5,7 @@ import json
 import os
 import re
 from urllib.parse import urlparse
+
 import httpx
 
 URL = os.getenv("SCHOLARTRACE_MODEL_URL", "http://127.0.0.1:8081/v1").rstrip("/")
@@ -14,7 +15,9 @@ if urlparse(URL).hostname not in {"localhost", "127.0.0.1", "::1"}:
 gate = asyncio.Semaphore(1)
 
 
-async def complete(system, prompt, max_tokens=1100, structured=True, schema=None):
+async def complete(
+    system, prompt, max_tokens=1100, structured=True, schema=None, reasoning=False
+):
     async with gate:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(150, connect=5), trust_env=False
@@ -43,7 +46,7 @@ async def complete(system, prompt, max_tokens=1100, structured=True, schema=None
                     if structured
                     else {}
                 ),
-                "chat_template_kwargs": {"enable_thinking": False},
+                "chat_template_kwargs": {"enable_thinking": reasoning},
             }
             for attempt in range(4):
                 try:
@@ -60,7 +63,12 @@ async def complete(system, prompt, max_tokens=1100, structured=True, schema=None
                     if attempt == 3:
                         raise
                     await asyncio.sleep(2 ** (attempt + 1))
-            text = response.json()["choices"][0]["message"]["content"]
+            choice = response.json()["choices"][0]
+            if choice.get("finish_reason") not in (None, "stop"):
+                raise ValueError("模型输出未正常结束，请缩小问题范围后重试")
+            text = choice["message"].get("content")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("模型未返回可用内容，请稍后重试")
     if structured:
         value = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip()))
         if not isinstance(value, dict):

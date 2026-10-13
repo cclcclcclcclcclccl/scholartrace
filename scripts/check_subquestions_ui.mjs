@@ -5,7 +5,9 @@ const { chromium } = createRequire(import.meta.url)(
   process.env.CODEX_BROWSER_MODULE ||
     "C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
 );
-const root = "artifacts/quality-round6";
+const root =
+  process.env.SCHOLARTRACE_QA_ARTIFACTS ||
+  `artifacts/quality-round7/browser-${Date.now()}`;
 await mkdir(root, { recursive: true });
 const browser = await chromium.launch({
   executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -77,7 +79,7 @@ try {
   assert(
     markdown.includes(first.question) && markdown.includes(second.question),
   );
-  assert(markdown.includes("本轮未形成通过核验的回答"));
+  assert(markdown.includes(second.reason));
   await writeFile(`${root}/partial-answer-export.md`, markdown);
   await page.getByRole("button", { name: "任务与成果", exact: true }).click();
   await page.getByRole("button").filter({ hasText: question }).first().click();
@@ -86,9 +88,38 @@ try {
     await page.locator(".artifact-result .answer-coverage li").count(),
     2,
   );
+  const candidate = page
+    .locator(".artifact-result .answer-coverage")
+    .getByRole("button", { name: /查看候选原文/ })
+    .first();
+  await candidate.waitFor();
+  const raw = page.locator(".artifact-result .claim-source").first();
+  assert.equal(await raw.getAttribute("open"), null);
+  await raw.locator("summary").click();
+  assert.equal(
+    await raw.locator("blockquote").innerText(),
+    report.answer.model_answer[0].quote,
+  );
+  await raw.locator("summary").click();
+  report.checks.push(
+    "Original citations collapse by default and expand without losing text; unresolved items offer source candidates",
+  );
   await page
     .locator(".artifact-result")
     .screenshot({ path: `${root}/coverage-reopened.png` });
+  const candidateLabel = await candidate.innerText();
+  const candidatePage = Number(candidateLabel.match(/第\s*(\d+)\s*页/)[1]);
+  await candidate.click();
+  await page.getByRole("spinbutton", { name: "当前页码" }).waitFor();
+  assert.equal(
+    Number(
+      await page.getByRole("spinbutton", { name: "当前页码" }).inputValue(),
+    ),
+    candidatePage,
+  );
+  report.checks.push(
+    "Unresolved candidate source opens the matching PDF page from a saved artifact",
+  );
   report.checks.push(
     "Persisted partial answer reopens with the same coverage and exports missing items to Markdown",
   );

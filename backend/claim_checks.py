@@ -4,6 +4,24 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
+from . import store
+
+
+def support_passages(quote, maximum=1600):
+    """Offer source-only spans so a reviewer cannot rewrite a table or quotation."""
+    source = store.quote_normalize(quote)
+    sentences = re.split(r"(?<=[.!?。！？])\s+(?=[A-Z\u4e00-\u9fff])", source)
+    candidates = [source] if len(source) <= maximum else []
+    for start in range(len(sentences)):
+        for size in range(1, min(4, len(sentences) - start) + 1):
+            candidates.append(" ".join(sentences[start : start + size]))
+    # Long unpunctuated PDF paragraphs still get overlapping, exact passages.
+    if len(source) > maximum:
+        candidates.extend(
+            source[i : i + maximum] for i in range(0, len(source), maximum // 2)
+        )
+    return [""] + list(dict.fromkeys(s for s in candidates if 12 <= len(s) <= maximum))
+
 
 def semantic_overreach(claim, quote):
     """Training sequences do not establish the model's supported context limit."""
@@ -91,9 +109,9 @@ def negative_result_mismatch(claim, quote):
         and not re.search(r"推测|猜测|假设|可能|或许|尚未|未证明", claim)
     ):
         return True
-    if re.search(r"(?:未|没有|并未)[^，。；]{0,18}(?:证明|比较)", claim) and not re.search(
-        r"\bnot\b|\bno\b|without|fail|未|没有", source, re.IGNORECASE
-    ):
+    if re.search(
+        r"(?:未|没有|并未)[^，。；]{0,18}(?:证明|比较)", claim
+    ) and not re.search(r"\bnot\b|\bno\b|without|fail|未|没有", source, re.IGNORECASE):
         return True
     negative = re.search(
         r"(?:not\s+observed|no)[^.]{0,100}(?:gains?|improvements?)[^.]{0,40}(?:using|with)\s+([^.]{1,100})",

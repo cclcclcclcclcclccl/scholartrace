@@ -155,20 +155,23 @@ def test_concept_evidence_keeps_method_not_bibliography(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "index,span,count",
+    "index,span,count,claim_text",
     [
-        ("0", "We use random projections in this method.", 1),
-        ("0", "We use an unrelated invented algorithm.", 0),
-        ("4", "We use random projections in this method.", 0),
+        ("0", "We use random projections in this method.", 1, "该方法使用随机投影。"),
+        ("0", "We use an unrelated invented algorithm.", 0, "该方法使用随机投影。"),
+        ("4", "We use random projections in this method.", 0, "该方法使用随机投影。"),
+        ("0", "We use random projections in this method.", 0, "该方法提升15%。"),
     ],
 )
-def test_grounded_requires_real_support_span(monkeypatch, index, span, count):
+def test_grounded_requires_real_support_span(
+    monkeypatch, index, span, count, claim_text
+):
     block = {
         "id": "b",
         "document_id": "d",
         "title": "Paper",
         "page": 1,
-        "text": "We use random projections in this method.",
+        "text": "We use random projections in this method. The baseline achieves 15% improvement.",
     }
     monkeypatch.setattr(
         store, "get_document", lambda identifier: {"title": "Paper", "metadata": {}}
@@ -178,6 +181,10 @@ def test_grounded_requires_real_support_span(monkeypatch, index, span, count):
 
     async def complete(system, prompt, **kwargs):
         if "strict evidence reviewer" in system:
+            allowed = kwargs["schema"]["properties"]["decisions"]["properties"]["0"][
+                "properties"
+            ]["support_span"]["enum"]
+            assert "We use random projections in this method." in allowed
             return {
                 "decisions": {
                     index: {"verdict": "supported_relevant", "support_span": span}
@@ -186,7 +193,7 @@ def test_grounded_requires_real_support_span(monkeypatch, index, span, count):
         if "Compare EVERY" in system:
             return {"unanswered_parts": [], "claims": []}
         return {
-            "claims": [{"text": "该方法使用随机投影。", "evidence_id": "E1"}],
+            "claims": [{"text": claim_text, "evidence_id": "E1"}],
             "limitations": "",
         }
 
@@ -195,3 +202,22 @@ def test_grounded_requires_real_support_span(monkeypatch, index, span, count):
     assert len(result["claims"]) == count
     if count:
         assert result["claims"][0]["support_span"] == span
+
+
+def test_support_options_preserve_pdf_text_and_late_passages():
+    from backend.claim_checks import support_passages
+
+    source = "ViT-Base\n12\n768\n3072\n12\n86M"
+    options = support_passages(source)
+    assert store.quote_normalize(source) in options
+    assert all(store.quote_in_source(p, source) for p in options)
+    assert not any("Layers:" in p for p in options)
+    long_source = (
+        "A long source paragraph without punctuation " * 90
+        + "The final condition must be retained."
+    )
+    options = support_passages(long_source)
+    assert any("The final condition must be retained." in p for p in options)
+    assert all(
+        len(p) <= 1600 and store.quote_in_source(p, long_source) for p in options
+    )

@@ -942,7 +942,16 @@ function App() {
                       <span>{answer.evidence.length} 条</span>
                     </div>
                     {!answer.comparison?.length && (
-                      <AnswerCoverage items={answer.subquestions} />
+                      <AnswerCoverage
+                        items={answer.subquestions}
+                        sources={answer.evidence}
+                        onLocateEvidence={(id) => {
+                          const source = answer.evidence.find(
+                            (b) => b.id === id,
+                          );
+                          if (source) locate(source);
+                        }}
+                      />
                     )}
                     {!!answer.comparison?.length && (
                       <div className="table-scroll comparison-table">
@@ -961,7 +970,16 @@ function App() {
                                   <small>{row.name}</small>
                                 </th>
                                 <td>
-                                  <AnswerCoverage items={row.subquestions} />
+                                  <AnswerCoverage
+                                    items={row.subquestions}
+                                    sources={answer.evidence}
+                                    onLocateEvidence={(id) => {
+                                      const source = answer.evidence.find(
+                                        (b) => b.id === id,
+                                      );
+                                      if (source) locate(source);
+                                    }}
+                                  />
                                   {row.claims.length
                                     ? row.claims.map((c, i) => (
                                         <div key={i}>

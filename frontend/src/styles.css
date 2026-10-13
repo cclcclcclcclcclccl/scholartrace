@@ -1541,3 +1541,11 @@ h1 {
   line-height: 1.8;
   margin: 4px 0;
 }
+.unresolved-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.unresolved-sources small {
+  flex-basis: 100%;
+}

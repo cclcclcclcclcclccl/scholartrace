@@ -2348,7 +2348,14 @@ function Artifact({
       {(result.kind === "matrix" ? [] : sections).map((s, i) => (
         <section key={i}>
           <h3>{s.title}</h3>
-          <AnswerCoverage items={s.subquestions} />
+          <AnswerCoverage
+            items={s.subquestions}
+            sources={s.evidence}
+            onLocateEvidence={(id) => {
+              const source = s.evidence.find((b) => b.id === id);
+              if (source) onLocate(source);
+            }}
+          />
           {s.claims.map((claim, j) => {
             const b = s.evidence.find((e) => e.id === claim.block_id);
             return (
@@ -2361,7 +2368,10 @@ function Artifact({
                     <blockquote>{claim.support_span}</blockquote>
                   </details>
                 )}
-                <blockquote>{claim.quote}</blockquote>
+                <details className="claim-source">
+                  <summary>展开引用原文</summary>
+                  <blockquote>{claim.quote}</blockquote>
+                </details>
                 {b && <SourceButton anchor={b} onLocate={onLocate} />}
                 {claim.source_context?.map((context, i) => (
                   <SourceButton key={i} anchor={context} onLocate={onLocate}>
