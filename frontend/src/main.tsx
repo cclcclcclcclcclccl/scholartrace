@@ -1,3 +1,4 @@
+import { AnswerCoverage, type Subquestion } from "./AnswerCoverage";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -89,11 +90,13 @@ type AuditItem = {
   };
 };
 type Answer = {
+  subquestions?: Subquestion[];
   limitations?: string;
   comparison?: {
     document_id: string;
     title: string;
     name: string;
+    subquestions?: Subquestion[];
     status: string;
     claims: {
       text: string;
@@ -938,6 +941,9 @@ function App() {
                       </strong>
                       <span>{answer.evidence.length} 条</span>
                     </div>
+                    {!answer.comparison?.length && (
+                      <AnswerCoverage items={answer.subquestions} />
+                    )}
                     {!!answer.comparison?.length && (
                       <div className="table-scroll comparison-table">
                         <table>
@@ -955,6 +961,7 @@ function App() {
                                   <small>{row.name}</small>
                                 </th>
                                 <td>
+                                  <AnswerCoverage items={row.subquestions} />
                                   {row.claims.length
                                     ? row.claims.map((c, i) => (
                                         <div key={i}>
@@ -1021,7 +1028,7 @@ function App() {
                             key={context.id}
                             onClick={() => locate(context)}
                           >
-                            核对表头 · 第 {context.page} 页{" "}
+                            核对表格上下文 · 第 {context.page} 页{" "}
                             <ArrowUpRight size={13} />
                           </button>
                         ))}

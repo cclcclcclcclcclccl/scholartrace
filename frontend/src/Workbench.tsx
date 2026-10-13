@@ -1,3 +1,4 @@
+import { AnswerCoverage, type Subquestion } from "./AnswerCoverage";
 import {
   ExecutionResult,
   type PreflightContent,
@@ -2184,6 +2185,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
 }
 
 type Section = {
+  subquestions?: Subquestion[];
   title: string;
   claims: {
     text: string;
@@ -2192,6 +2194,8 @@ type Section = {
     document_id: string;
     page: number;
     source_context?: Anchor[];
+    support_span?: string;
+    subquestion?: string;
   }[];
   evidence: (Anchor & { id: string; text: string })[];
   limitations: string;
@@ -2344,16 +2348,24 @@ function Artifact({
       {(result.kind === "matrix" ? [] : sections).map((s, i) => (
         <section key={i}>
           <h3>{s.title}</h3>
+          <AnswerCoverage items={s.subquestions} />
           {s.claims.map((claim, j) => {
             const b = s.evidence.find((e) => e.id === claim.block_id);
             return (
               <div key={j} className="grounded-claim">
+                {claim.subquestion && <small>{claim.subquestion}</small>}
                 <p>{claim.text}</p>
+                {claim.support_span && (
+                  <details>
+                    <summary>查看支持片段（模型初判）</summary>
+                    <blockquote>{claim.support_span}</blockquote>
+                  </details>
+                )}
                 <blockquote>{claim.quote}</blockquote>
                 {b && <SourceButton anchor={b} onLocate={onLocate} />}
                 {claim.source_context?.map((context, i) => (
                   <SourceButton key={i} anchor={context} onLocate={onLocate}>
-                    核对表头
+                    核对表格上下文
                   </SourceButton>
                 ))}
               </div>

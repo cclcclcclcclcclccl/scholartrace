@@ -28,7 +28,11 @@ def concept_evidence(question, identifiers, maximum=4):
     for trigger, query, required in CONCEPTS:
         if not re.search(trigger, question, re.IGNORECASE):
             continue
-        candidates = store.search(query, identifiers, limit=12)
+        candidates = store.search(
+            query,
+            identifiers,
+            limit=60 if query == "exact approximate attention" else 12,
+        )
         if query == "exact approximate attention":
             # A definition is a better first anchor for a method-category question
             # than a timing paragraph comparing many method categories.
@@ -40,7 +44,8 @@ def concept_evidence(question, identifiers, maximum=4):
                             store.quote_normalize(b["text"]),
                             re.IGNORECASE,
                         )
-                    )
+                    ),
+                    b.get("page", 0),
                 )
             )
         accepted = 0

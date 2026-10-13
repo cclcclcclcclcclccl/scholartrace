@@ -1,0 +1,31 @@
+{
+  "notice": "Frozen before first call on 2026-10-13 for partial-answer and input/output conditions. Developer-authored; not independent evaluation. Do not alter patterns after observing outputs.",
+  "cases": [
+    {
+      "id": "gpt4_input_output_conditions",
+      "files": ["2303.08774v6.pdf"],
+      "question": "仅依据这份技术报告，GPT-4 接受哪些类型的输入，产生哪种类型的输出？请区分输入和输出，不能把能够读图说成能够生成图像。",
+      "required_patterns": ["图像|图片", "文本|文字", "输入", "输出"],
+      "forbidden_patterns": ["(?:输出|生成)(?:文本和|文字和)?图像", "输出(?:包括|包含).*图像"],
+      "source_blocks": [],
+      "expected": "Report p1: image and text inputs, text outputs; either abstract b1202171f270b7dc08443f8f or introduction 16f4a9efd9c8cea51c502e63 is acceptable. Do not broaden to image generation."
+    },
+    {
+      "id": "vit_partial_known_and_unreported",
+      "files": ["2010.11929v2.pdf"],
+      "question": "请分别回答：ViT-Base 在表 1 中的层数、隐藏宽度和参数量是多少？论文有没有报告 ViT-H/14 使用随机种子 42 的那一次独立训练的 ImageNet 准确率？后者不能用汇总结果代替，缺证据也请保留前一项的回答。",
+      "required_patterns": ["12", "768", "86\\s*[Mm]|8600万"],
+      "forbidden_patterns": ["种子\\s*42[^。]{0,40}准确率(?:为|是|达到)\\s*\\d"],
+      "source_blocks": ["6905b5d9df7555f22c54661b"],
+      "expected": "Base:12 layers,768 hidden,86M params; no per-seed42 measurement can be substituted by aggregate. Subquestion state must preserve supported answer while showing unresolved seed request."
+    },
+    {
+      "id": "lora_training_vs_deployment",
+      "files": ["2106.09685v2.pdf"],
+      "question": "LoRA 训练时预训练权重是冻结还是更新，低秩矩阵是否训练？部署时如何消除额外推理延迟？请分别回答训练和部署，不要用切换任务替代部署合并。",
+      "required_patterns": ["冻结", "训练|更新", "合并", "推理|部署"],
+      "source_blocks": [],
+      "expected": "Original weights frozen, low-rank factors trainable; merge with original weights at deployment. Verify exact claims against returned paragraphs; do not confuse task switching with merge."
+    }
+  ]
+}

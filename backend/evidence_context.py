@@ -119,6 +119,21 @@ def attach_table_headers(blocks):
                     for row in rows
                     for label, value in zip(labels, row)
                 ]
+                # A table number is a cited fact too. Keep a nearby caption as a
+                # separate original source so it cannot be confused with row data.
+                captions = [
+                    b
+                    for b in pages[key]
+                    if re.match(r"^Table\s+\d+\s*[:.]", b["text"], re.IGNORECASE)
+                    and len(b["text"]) <= 800
+                    and 0 <= b["bbox"][1] - block["bbox"][3] <= 35
+                    and b["bbox"][0] < block["bbox"][2]
+                    and b["bbox"][2] > block["bbox"][0]
+                ]
+                if len(captions) == 1:
+                    block["source_context"].append(
+                        {**captions[0], "context_role": "table_caption"}
+                    )
                 break
         output.append(block)
     return output
@@ -128,9 +143,10 @@ def prompt_text(block):
     text = store.quote_normalize(block["text"])
     for header in block.get("source_context", []):
         text += (
-            "\nTABLE HEADER (same PDF page, exact source): "
-            + store.quote_normalize(header["text"])
-        )
+            "\nTABLE CAPTION (same PDF page, exact source): "
+            if header.get("context_role") == "table_caption"
+            else "\nTABLE HEADER (same PDF page, exact source): "
+        ) + store.quote_normalize(header["text"])
     if block.get("table_fields"):
         text += "\nColumns matched by PDF row order: " + "; ".join(
             f"{p['field']} = {p['value']}" for p in block["table_fields"]

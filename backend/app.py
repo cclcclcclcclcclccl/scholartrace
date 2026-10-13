@@ -232,7 +232,7 @@ async def ask(query: Query):
                     "notice": "保存时的回答及原文引用；模型结论需要核验，论文更新后可在版本复核中检查成果依赖。",
                 },
             )
-            if claims
+            if claims or result.get("subquestions")
             else None
         )
         return {
@@ -245,6 +245,7 @@ async def ask(query: Query):
             else "当前检索证据不足以给出可核验的回答；以下原文供复核，不代表问题的答案。",
             "limitations": result.get("limitations", ""),
             "comparison": result.get("comparison", []),
+            "subquestions": result.get("subquestions", []),
             "artifact_id": saved["id"] if saved else None,
         }
     except (httpx.HTTPError, ValueError, KeyError, TypeError):

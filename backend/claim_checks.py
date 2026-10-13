@@ -34,6 +34,16 @@ def negative_result_mismatch(claim, quote):
     semantic verifier. A claim of missing proof also needs explicit source support.
     """
     source = unicodedata.normalize("NFKC", quote)
+    if re.search(r"部署时|during deployment", claim, re.IGNORECASE) and not re.search(
+        r"deploy|production|merge|absorb|inference|部署|推理", source, re.IGNORECASE
+    ):
+        return True
+    if re.search(
+        r"(?:可以|能够).{0,65}(?:不同任务|different tasks).{0,65}(?:一次|single|one forward)",
+        claim,
+        re.IGNORECASE,
+    ) and not re.search(r"batch|混合", source, re.IGNORECASE):
+        return True
     for maximum in re.finditer(
         r"up\s+to\s+(\d+(?:\.\d+)?)\s*[×x]", source, re.IGNORECASE
     ):
@@ -81,7 +91,7 @@ def negative_result_mismatch(claim, quote):
         and not re.search(r"推测|猜测|假设|可能|或许|尚未|未证明", claim)
     ):
         return True
-    if re.search(r"(?:未|没有|并未)[^，。；]{0,18}证明", claim) and not re.search(
+    if re.search(r"(?:未|没有|并未)[^，。；]{0,18}(?:证明|比较)", claim) and not re.search(
         r"\bnot\b|\bno\b|without|fail|未|没有", source, re.IGNORECASE
     ):
         return True
