@@ -214,7 +214,7 @@ def export(format: Literal["md", "tsv", "json"] = "md"):
                     + c["quote"]
                     + f"\n\n{c['title']} · v{c['version'] or '?'} · PDF第{c['page']}页\n来源块：{c['block_id']}"
                 )
-                + "\tScholarTrace"
+                + "\tMoheng"
                 for c in rows
             )
         )
@@ -232,6 +232,6 @@ def export(format: Literal["md", "tsv", "json"] = "md"):
         value,
         media_type="text/plain; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="ScholarTrace-recall.{format}"'
+            "Content-Disposition": f'attachment; filename="Moheng-recall.{format}"'
         },
     )

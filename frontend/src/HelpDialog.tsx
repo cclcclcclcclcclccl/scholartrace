@@ -120,7 +120,7 @@ export function HelpDialog({
       <header className="help-top">
         <span>
           <Layers3 size={18} />
-          研证 · {tutorial ? "首次使用指南" : "使用帮助"}
+          墨衡 · {tutorial ? "首次使用指南" : "使用帮助"}
         </span>
         <button
           className="help-close"

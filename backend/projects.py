@@ -284,7 +284,7 @@ def bundle(identifier: str):
         artifact_index.append({"id": item["id"], "title": item["title"], "file": name})
     add("artifacts/index.json", artifact_index)
     files["README.txt"] = (
-        "研证项目成果包 / ScholarTrace project bundle\n"
+        "墨衡项目成果包 / Moheng project bundle\n"
         "project.json：项目目标、文献元数据、活跃笔记和成果索引。\n"
         "notes.json：关联文献的全部证据笔记（含归档状态、编辑历史和原始引用）。\n"
         "jobs.json：本项目全部任务的持久化状态、输入和结果。\n"

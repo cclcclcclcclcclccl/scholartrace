@@ -1,4 +1,4 @@
-# 研证 · ScholarTrace
+# 墨衡 · Moheng
 
 **让研究结论跟随证据一起更新。** 面向科研论文阅读、比较与版本跟踪的全栈科研助手，使用本地大模型，不依赖付费模型 API。
 
@@ -8,7 +8,8 @@
 
 - [项目与评审入口](https://cclcclcclcclcclccl.github.io/scholartrace/)
 - [源码仓库](https://github.com/cclcclcclcclcclccl/scholartrace)
-- [材料下载](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/submission-20261021)
+- [最终版材料下载](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/moheng-final-20261021)
+- [最终轮对标、修改与验收](docs/墨衡_最终轮对标与验收_2026-10-21.md)
 - [逐步使用教程](docs/评审使用指南_2026-10-21.md)
 - [需求验收矩阵](docs/需求验收矩阵.md) 与 [历轮原始开发记录](docs/开发历史与历轮验收.md)
 
@@ -26,6 +27,10 @@
 | 写作与绘图 | 有来源的框架、可编辑图稿、CSV 统计图、图注与复现导出 |
 
 主要特色：将原文块、笔记和研究成果连接起来，论文版本变化后提供两侧证据和待复核项；把漏答与比较缺项转为有出处的补问、补查流程。系统集成创新不等于新基础模型或已证实的原创科研算法。
+
+最终版增加顶部“快捷查找”：Ctrl+K / Command+K 搜索功能或库内论文，方向键选择、Enter打开、Esc关闭；未导入论文仍从“论文发现”联网检索。批量PDF导入逐项处理并列出失败原因，成功项及时显示，失败项可单独重试。
+
+产品已更名为“墨衡 Moheng”。历史开发文档保留当时旧名；Git仓库地址、环境变量、数据文件名及浏览器存储键仍使用技术标识scholartrace，保证已有资料与链接兼容。Windows可双击“启动墨衡.cmd”。
 
 ## 技术架构
 
@@ -49,7 +54,7 @@ node scripts/start.mjs
 
 打开 http://127.0.0.1:8765/ 。首次下载免费公开模型需要网络和数 GB 磁盘；实际速度取决于本机硬件。若缺少模型，界面会说明降级状态，不伪造生成结果。公式识别为可选安装：`.venv\Scripts\python scripts/install_formula.py`。停止运行：`node scripts/stop.mjs`。
 
-环境变量模板见 `.env.example`；锁定依赖见 `requirements-lock.txt` 和 `frontend/package-lock.json`。使用系统环境变量设置选项；启动器不自动加载 `.env`。更完整的 CPU/Linux/Docker 边界见 [部署与复现](docs/部署与复现.md)。Docker 配置未在本机实跑，不标作已验收。
+环境变量模板见 `.env.example`；锁定依赖见 `requirements-lock.txt` 和 `frontend/package-lock.json`。守护启动器存在 `.env` 时会读取；亦可设置系统环境变量。不要将含密钥的 `.env` 提交到仓库。更完整的 CPU/Linux/Docker 边界见 [部署与复现](docs/部署与复现.md)。Docker 配置未在本机实跑，不标作已验收。
 
 ## 验证与复现
 

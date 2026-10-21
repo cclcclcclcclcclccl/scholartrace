@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         await jobs.shutdown()
 
 
-app = FastAPI(title="ScholarTrace", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="墨衡 Moheng", version="0.2.0", lifespan=lifespan)
 app.middleware("http")(accounts.scope)
 app.include_router(accounts.router)
 app.include_router(features.router)

@@ -207,6 +207,6 @@ def export(identifier: str, format: Literal["md", "json"] = "md"):
         text,
         media_type="text/plain; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="ScholarTrace-rehearsal-{identifier}.{format}"'
+            "Content-Disposition": f'attachment; filename="Moheng-rehearsal-{identifier}.{format}"'
         },
     )

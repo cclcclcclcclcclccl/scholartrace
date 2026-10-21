@@ -183,7 +183,7 @@ export function LibraryBrowser({
         ...organization(p),
       }));
     downloadText(
-      "研证-文献清单.json",
+      "墨衡-文献清单.json",
       JSON.stringify(
         { exported_at: new Date().toISOString(), papers: exported },
         null,

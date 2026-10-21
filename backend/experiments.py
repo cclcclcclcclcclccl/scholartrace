@@ -356,7 +356,7 @@ def write_bundle(spec, result, folder):
         encoding="utf-8",
     )
     (folder / "README.txt").write_text(
-        "从 ScholarTrace 项目根目录运行：\n.venv/Scripts/python.exe <解压目录>/reproduce.py\n须从包含 backend 文件夹的项目根目录运行。需要项目依赖 numpy/scipy/matplotlib。\nraw.csv 保留原始输入，summary.csv 为统计汇总；原始 CSV 可能包含用户文本，请按文本数据导入。\nCI 不是显著性检验。未运行模型训练或验证原数据真实性。\n",
+        "从 Moheng 项目根目录运行：\n.venv/Scripts/python.exe <解压目录>/reproduce.py\n须从包含 backend 文件夹的项目根目录运行。需要项目依赖 numpy/scipy/matplotlib。\nraw.csv 保留原始输入，summary.csv 为统计汇总；原始 CSV 可能包含用户文本，请按文本数据导入。\nCI 不是显著性检验。未运行模型训练或验证原数据真实性。\n",
         encoding="utf-8",
     )
 

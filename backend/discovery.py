@@ -13,7 +13,7 @@ from defusedxml import ElementTree as ET
 from . import database, jobs, store
 
 NS = {"a": "http://www.w3.org/2005/Atom", "ar": "http://arxiv.org/schemas/atom"}
-HEADERS = {"User-Agent": "ScholarTrace/0.2 (local academic research assistant)"}
+HEADERS = {"User-Agent": "Moheng/0.2 (local academic research assistant)"}
 arxiv_gate = asyncio.Lock()
 last_arxiv = 0.0
 

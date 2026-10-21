@@ -46,6 +46,7 @@ import {
   type EnterBehavior,
 } from "./preferences";
 import { HelpButton, HelpDialog } from "./HelpDialog";
+import { QuickSearch } from "./QuickSearch";
 import type { HelpTopic } from "./helpContent";
 import { Projects } from "./Projects";
 import {
@@ -158,7 +159,7 @@ async function api<T>(
     throw new Error(
       error.name === "TimeoutError"
         ? "请求等待超时，请稍后重试。"
-        : "本地服务暂时无法连接，请双击启动研证.cmd 后重试。",
+        : "本地服务暂时无法连接，请双击启动墨衡.cmd 后重试。",
     );
   });
   if (!response.ok) {
@@ -177,6 +178,7 @@ function App() {
   const [selected, setSelected] = useState<Document | null>(null);
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState("");
+  const [quickSearch, setQuickSearch] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [focusReading, setFocusReading] = useState(false);
   const [assistantWidth, setAssistantWidth] = useState(350);
@@ -234,6 +236,22 @@ function App() {
     if (help?.tutorial) markTutorialSeen();
     setHelp(null);
   }
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (
+        event.isComposing ||
+        event.repeat ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.key.toLowerCase() !== "k"
+      )
+        return;
+      if (document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      setQuickSearch(true);
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
 
   function cancelWaiting() {
     activeRequest.current?.abort();
@@ -546,24 +564,46 @@ function App() {
     }
   }
   async function upload(files: FileList | null) {
-    if (!files?.length) return;
+    if (!files?.length || uploading) return;
     setUploading(true);
     setError("");
+    let succeeded = 0;
+    const failures: string[] = [];
     try {
       for (const file of files) {
-        const data = new FormData();
-        data.append("file", file);
-        const response = await fetch("/api/documents", {
-          method: "POST",
-          body: data,
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || "上传失败");
+        try {
+          const data = new FormData();
+          data.append("file", file);
+          const response = await fetch("/api/documents", {
+            method: "POST",
+            body: data,
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok)
+            throw new Error(
+              typeof result.detail === "string"
+                ? result.detail
+                : `上传失败 (${response.status})`,
+            );
+          succeeded++;
+        } catch (e) {
+          failures.push(
+            `${file.name}：${(e as Error).message || "上传失败，请检查连接"}`,
+          );
+        }
       }
-      await refresh();
-      setToast("文献已导入");
+      if (succeeded) {
+        await refresh();
+        setToast(
+          `${succeeded} 份文件已导入或复用已有文献${failures.length ? `，${failures.length} 份失败` : ""}`,
+        );
+      }
+      if (failures.length)
+        setError(`以下文件未导入，请修正后单独重试：${failures.join("；")}`);
     } catch (e) {
-      setError((e as Error).message);
+      setError(
+        `已处理 ${succeeded} 份文件，但列表刷新失败，请刷新页面查看。${(e as Error).message}${failures.length ? `；未导入：${failures.join("；")}` : ""}`,
+      );
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
@@ -578,15 +618,15 @@ function App() {
       className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${focusReading && view === "reader" ? "focus-reading" : ""}`}
     >
       <aside className="sidebar">
-        <a className="brand" href="/" aria-label="研证首页">
+        <a className="brand" href="/" aria-label="墨衡首页">
           <span className="brand-icon">
             <Layers3 size={24} />
           </span>
           <span>
             <strong>
-              研证<span className="brand-dot">.</span>
+              墨衡<span className="brand-dot">.</span>
             </strong>
-            <small>SCHOLARTRACE</small>
+            <small>MOHENG</small>
           </span>
         </a>
         <div className="workspace-label">
@@ -733,7 +773,9 @@ function App() {
           </div>
         )}
         <div className="sidebar-footer">
-          <div className="avatar">蔡</div>
+          <div className="avatar" aria-hidden="true">
+            墨
+          </div>
           <div>
             <button
               className="account-link"
@@ -741,7 +783,7 @@ function App() {
             >
               研究空间与账号
             </button>
-            <small>证据留在本机</small>
+            <small>独立研究空间</small>
           </div>
           <ShieldCheck size={17} />
         </div>
@@ -781,6 +823,15 @@ function App() {
             </strong>
           </div>
           <div className="header-actions">
+            <button
+              type="button"
+              className="header-tutorial quick-trigger"
+              onClick={() => setQuickSearch(true)}
+              aria-keyshortcuts="Control+k Meta+k"
+            >
+              <Search size={16} />
+              快捷查找 <kbd>Ctrl K</kbd>
+            </button>
             {view === "reader" && (
               <button
                 className="header-tutorial"
@@ -840,7 +891,7 @@ function App() {
             <div>
               <strong>本地服务暂时断开，正在自动重连</strong>
               <p>
-                若持续无法恢复，请双击项目文件夹中的「启动研证.cmd」。输入内容会保留在当前页面。
+                若持续无法恢复，请双击项目文件夹中的「启动墨衡.cmd」。输入内容会保留在当前页面。
               </p>
             </div>
             <button onClick={() => void checkService()}>立即重试</button>
@@ -1989,6 +2040,17 @@ function App() {
           </section>
         )}
       </main>
+      {quickSearch && (
+        <QuickSearch
+          documents={documents}
+          onClose={() => setQuickSearch(false)}
+          onNavigate={changeView}
+          onDocument={(id) => {
+            const doc = documents.find((item) => item.id === id);
+            if (doc) selectDocument(doc);
+          }}
+        />
+      )}
       {help && (
         <HelpDialog
           key={`${help.tutorial}-${help.topic}`}
