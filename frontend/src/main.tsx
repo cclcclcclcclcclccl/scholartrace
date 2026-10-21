@@ -1,4 +1,10 @@
+import { AnswerChecklist, type Checklist } from "./AnswerChecklist";
+import { ReviewEvidence, type SemanticReview } from "./ReviewEvidence";
 import { AnswerCoverage, type Subquestion } from "./AnswerCoverage";
+import { BackgroundAnswers } from "./BackgroundAnswers";
+import { EvidenceRecall } from "./EvidenceRecall";
+import { Rehearsal } from "./Rehearsal";
+import { EvidenceBoundaries } from "./EvidenceBoundaries";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -19,11 +25,16 @@ import {
   ShieldCheck,
   Sparkles,
   StickyNote,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Maximize2,
+  Minimize2,
+  FolderOpen,
   X,
 } from "lucide-react";
 import { Reader } from "./Reader";
 import { Workbench, workViews, type WorkView } from "./Workbench";
-import { request, type Anchor } from "./workspaceApi";
+import { request, downloadText, type Anchor } from "./workspaceApi";
 import { readSession, savedPage, rememberPage } from "./session";
 import { useService } from "./useService";
 import { PageJump } from "./PageJump";
@@ -36,6 +47,12 @@ import {
 } from "./preferences";
 import { HelpButton, HelpDialog } from "./HelpDialog";
 import type { HelpTopic } from "./helpContent";
+import { Projects } from "./Projects";
+import {
+  openProjectLink,
+  projectFromHash,
+  type ProjectContext,
+} from "./projectApi";
 import "./styles.css";
 
 type Document = {
@@ -80,16 +97,17 @@ type AuditItem = {
   explanation: string;
   numbers_only_in_old: string[];
   numbers_only_in_new: string[];
-  semantic_review?: {
-    status: string;
-    method?: string;
-    decision?: "same_claim" | "claim_changed" | "unclear";
-    reason: string;
-    old_quote?: string;
-    new_quote?: string;
-  };
+  semantic_review?: SemanticReview;
 };
 type Answer = {
+  source_scope?: {
+    block_id: string;
+    document_id: string;
+    page: number;
+    title: string;
+    notice: string;
+  };
+  answer_checklist?: Checklist;
   subquestions?: Subquestion[];
   limitations?: string;
   comparison?: {
@@ -159,18 +177,32 @@ function App() {
   const [selected, setSelected] = useState<Document | null>(null);
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [focusReading, setFocusReading] = useState(false);
+  const [assistantWidth, setAssistantWidth] = useState(350);
+  const [projectContext, setProjectContext] = useState<ProjectContext | null>(
+    null,
+  );
   const [question, setQuestion] = useState("");
+  const [boundaryTarget, setBoundaryTarget] = useState("");
   const [enterBehavior, setEnterBehavior] = useState(readEnterBehavior);
   const composing = useRef(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
+  const [answerScope, setAnswerScope] = useState<string[]>([]);
+  const [pinnedBlock, setPinnedBlock] = useState<Block | null>(null);
+  const [pinLoading, setPinLoading] = useState(false);
+  const pinSequence = useRef(0);
+
+  const questionInput = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [highlight, setHighlight] = useState<Block | null>(null);
-  const [view, setView] = useState<"reader" | "notes" | "audit" | WorkView>(
-    "reader",
-  );
+  const [view, setView] = useState<
+    "reader" | "notes" | "audit" | "projects" | WorkView
+  >(projectFromHash() ? "projects" : "reader");
   const [scope, setScope] = useState("current");
   const [scopeIds, setScopeIds] = useState<string[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [noteBase, setNoteBase] = useState("");
   const [editingNote, setEditingNote] = useState<number | null>(null);
   const [editedNote, setEditedNote] = useState("");
   const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
@@ -208,9 +240,25 @@ function App() {
     activeRequest.current = null;
     setBusy(false);
   }
-  function changeView(next: "reader" | "notes" | "audit" | WorkView) {
+  function changeView(
+    next: "reader" | "notes" | "audit" | "projects" | WorkView,
+  ) {
     if (next !== view) cancelWaiting();
+    if (next !== "reader") setFocusReading(false);
     setView(next);
+  }
+  useEffect(() => {
+    const handle = () => {
+      cancelWaiting();
+      setFocusReading(false);
+      setView("projects");
+    };
+    window.addEventListener("hashchange", handle);
+    return () => window.removeEventListener("hashchange", handle);
+  }, []);
+  function returnToProject() {
+    if (projectContext) openProjectLink(projectContext.id);
+    changeView("projects");
   }
 
   async function refresh() {
@@ -265,7 +313,56 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+  useEffect(() => {
+    pinSequence.current++;
+    setPinLoading(false);
+    setPinnedBlock((old) =>
+      old && old.document_id === selected?.id && scope === "current"
+        ? old
+        : null,
+    );
+  }, [selected?.id, scope, projectContext?.id]);
+  async function pinSource(block: Block) {
+    if (busy || pinLoading) return;
+    const sequence = ++pinSequence.current;
+    setPinLoading(true);
+    setError("");
+    try {
+      const blocks = await api<Block[]>(
+        `/api/documents/${block.document_id}/pages/${block.page}/blocks`,
+      );
+      if (sequence !== pinSequence.current) return;
+      const full = blocks.find((b) => b.id === block.id);
+      if (!full || full.text.length < 12 || full.text.length > 4000)
+        throw new Error("请选择12—4000字的原文段落，过长内容不会被截断。");
+      const doc = documents.find((d) => d.id === block.document_id);
+      if (
+        !doc ||
+        (projectContext && !projectContext.document_ids.includes(doc.id))
+      )
+        throw new Error("原文已不在当前文献范围，请重新选择。");
+      const chosen = {
+        ...full,
+        title: doc.title,
+        version: doc.version || undefined,
+      };
+      setScope("current");
+      setScopeIds([doc.id]);
+      setPinnedBlock(chosen);
+      locate(chosen);
+      setToast("已限定到这段原文，修改问题后发送；下方仍保留上次回答。");
+      questionInput.current?.focus();
+    } catch (e) {
+      if (sequence === pinSequence.current) setError((e as Error).message);
+    } finally {
+      if (sequence === pinSequence.current) setPinLoading(false);
+    }
+  }
   function selectDocument(doc: Document) {
+    pinSequence.current++;
+    setPinnedBlock(null);
+    setPinLoading(false);
+    setProjectContext(null);
     setSelected(doc);
     activeRequest.current?.abort();
     activeRequest.current = null;
@@ -307,11 +404,43 @@ function App() {
       setError((e as Error).message);
     }
   }
+  function prepareQuestion(part: Subquestion, ids: string[]) {
+    if (busy || !ids.length) return;
+    const doc = documents.find((d) => d.id === ids[0]);
+    if (
+      !doc ||
+      ids.some((id) => !documents.some((d) => d.id === id)) ||
+      (projectContext &&
+        ids.some((id) => !projectContext.document_ids.includes(id)))
+    ) {
+      setError("原回答的文献已不在当前可用范围，请先恢复文献或回到原项目。");
+      return;
+    }
+    setScope(ids.length === 1 ? "current" : "multiple");
+    setScopeIds([...ids]);
+    if (selected?.id !== doc.id) {
+      setSelected(doc);
+      setPage(savedPage(doc.id, doc.pages));
+      setHighlight(null);
+    }
+    setQuestion(part.question);
+    setToast(
+      `已带入本项问题与 ${ids.length} 篇原文献，可修改后发送；下方保留上次回答。`,
+    );
+    requestAnimationFrame(() => {
+      questionInput.current?.focus();
+      questionInput.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }
   async function ask(value = question) {
     if (
       !selected ||
       !value.trim() ||
       busy ||
+      pinLoading ||
       activeRequest.current ||
       (scope === "multiple" && scopeIds.length === 0) ||
       serviceStatus !== "online"
@@ -323,22 +452,31 @@ function App() {
     setBusy(true);
     setError("");
     setAnswer(null);
+    const requestedIds =
+      scope === "all"
+        ? []
+        : scope === "multiple"
+          ? [...scopeIds]
+          : [selected.id];
     try {
       const result = await api<Answer>(
         "/api/ask",
         {
           question: value,
-          document_ids:
-            scope === "all"
-              ? []
-              : scope === "multiple"
-                ? scopeIds
-                : [selected.id],
+          project_id: projectContext?.id,
+          document_ids: requestedIds,
+          ...(pinnedBlock
+            ? {
+                source_block_id: pinnedBlock.id,
+                source_quote: pinnedBlock.text,
+              }
+            : {}),
         },
         AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
       );
       if (activeRequest.current !== controller) return;
       setAnswer(result);
+      setAnswerScope(requestedIds);
       if (result.evidence[0]) locate(result.evidence[0]);
     } catch (e) {
       if (
@@ -366,20 +504,34 @@ function App() {
       setError((e as Error).message);
     }
   }
-  async function runAudit() {
+  async function runAudit(noteIds?: number[]) {
     if (!targetId || busy) return;
     const controller = new AbortController();
     activeRequest.current = controller;
     setBusy(true);
     setError("");
-    setAuditResults(null);
+    if (!noteIds) setAuditResults(null);
     try {
       const result = await api<{ results: AuditItem[] }>(
         "/api/versions/audit",
-        { target_document_id: targetId },
+        { target_document_id: targetId, note_ids: noteIds },
         AbortSignal.any([controller.signal, AbortSignal.timeout(300000)]),
       );
-      if (activeRequest.current === controller) setAuditResults(result.results);
+      if (activeRequest.current === controller)
+        setAuditResults((previous) =>
+          result.results.map((item) => {
+            const old = noteIds
+              ? previous?.find((row) => row.note.id === item.note.id)
+              : undefined;
+            const { semantic_review: _newReview, ...newSource } = item;
+            const { semantic_review: _oldReview, ...oldSource } = old || {};
+            return old &&
+              item.semantic_review?.status === "not_checked" &&
+              JSON.stringify(newSource) === JSON.stringify(oldSource)
+              ? old
+              : item;
+          }),
+        );
     } catch (e) {
       if (
         activeRequest.current === controller &&
@@ -422,7 +574,9 @@ function App() {
   );
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${focusReading && view === "reader" ? "focus-reading" : ""}`}
+    >
       <aside className="sidebar">
         <a className="brand" href="/" aria-label="研证首页">
           <span className="brand-icon">
@@ -438,7 +592,29 @@ function App() {
         <div className="workspace-label">
           我的研究空间 <span>LOCAL</span>
         </div>
-        <nav className="nav-list">
+        <nav className="nav-list" aria-label="科研主导航">
+          <button
+            className={view === "projects" ? "active" : ""}
+            onClick={() => changeView("projects")}
+          >
+            <FolderOpen size={17} />
+            研究项目
+          </button>
+          {(["discover", "library"] as WorkView[]).map((id) => {
+            const { label, icon: Icon } = workViews.find(
+              (item) => item.id === id,
+            )!;
+            return (
+              <button
+                key={id}
+                className={view === id ? "active" : ""}
+                onClick={() => changeView(id)}
+              >
+                <Icon size={17} />
+                {label}
+              </button>
+            );
+          })}
           <button
             className={view === "reader" ? "active" : ""}
             onClick={() => changeView("reader")}
@@ -454,72 +630,108 @@ function App() {
             证据笔记<span>{notes.length}</span>
           </button>
           <button
+            className={view === "studio" ? "active" : ""}
+            onClick={() => changeView("studio")}
+          >
+            <Sparkles size={17} />
+            科研工作室
+          </button>
+          <button
             className={view === "audit" ? "active" : ""}
             onClick={() => changeView("audit")}
           >
             <GitCompareArrows size={17} />
             版本复核
           </button>
-          {workViews.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              className={view === id ? "active" : ""}
-              onClick={() => changeView(id)}
-            >
-              <Icon size={17} />
-              {label}
-            </button>
-          ))}
         </nav>
-        <div className="library-heading">
-          <span>文献库</span>
-          <div>
-            <HelpButton topic="library" onOpen={openHelp} />
-            <button
-              title="导入 PDF"
-              className="icon-button"
-              onClick={() => fileInput.current?.click()}
-            >
-              <Plus size={17} />
-            </button>
+        <details
+          className="nav-more"
+          key={
+            ["translate", "graph", "tasks", "account"].includes(view)
+              ? "active-tools"
+              : "tools"
+          }
+          open={["translate", "graph", "tasks", "account"].includes(view)}
+        >
+          <summary>更多工具与成果</summary>
+          <nav className="nav-list" aria-label="辅助工具">
+            {workViews
+              .filter((item) =>
+                ["translate", "graph", "tasks", "account"].includes(item.id),
+              )
+              .map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  className={view === id ? "active" : ""}
+                  onClick={() => changeView(id)}
+                >
+                  <Icon size={17} />
+                  {label}
+                </button>
+              ))}
+          </nav>
+        </details>
+        {view === "reader" ? (
+          <>
+            <div className="library-heading">
+              <span>文献库</span>
+              <div>
+                <HelpButton topic="library" onOpen={openHelp} />
+                <button
+                  title="导入 PDF"
+                  className="icon-button"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <Plus size={17} />
+                </button>
+              </div>
+            </div>
+            <label className="library-search">
+              <Search size={14} />
+              <input
+                aria-label="筛选文献"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="搜索标题或文件名"
+              />
+            </label>
+            <div className="document-list">
+              {filtered.map((doc) => (
+                <button
+                  key={doc.id}
+                  className={`document-item ${selected?.id === doc.id ? "selected" : ""}`}
+                  onClick={() => selectDocument(doc)}
+                  title={doc.title}
+                >
+                  <FileText size={17} />
+                  <span>
+                    <strong>{doc.title}</strong>
+                    <small>
+                      {doc.version ? `v${doc.version} · ` : ""}
+                      {doc.pages} 页
+                      {doc.status === "needs_ocr"
+                        ? " · 待 OCR"
+                        : doc.status === "partial_ocr"
+                          ? " · 部分页需核对"
+                          : doc.status === "ocr_ready"
+                            ? " · 扫描件"
+                            : ""}
+                    </small>
+                  </span>
+                </button>
+              ))}
+              {!filtered.length && (
+                <p className="muted empty-filter">没有匹配的文献</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="sidebar-context">
+            <strong>让研究有据可循</strong>
+            <p>发现文献 → 阅读与笔记 → 研究成果 → 更新复核</p>
+            <button onClick={() => changeView("reader")}>返回阅读台 →</button>
           </div>
-        </div>
-        <label className="library-search">
-          <Search size={14} />
-          <input
-            aria-label="筛选文献"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="搜索标题或文件名"
-          />
-        </label>
-        <div className="document-list">
-          {filtered.map((doc) => (
-            <button
-              key={doc.id}
-              className={`document-item ${selected?.id === doc.id ? "selected" : ""}`}
-              onClick={() => selectDocument(doc)}
-              title={doc.title}
-            >
-              <FileText size={17} />
-              <span>
-                <strong>{doc.title}</strong>
-                <small>
-                  {doc.version ? `v${doc.version} · ` : ""}
-                  {doc.pages} 页
-                  {doc.status === "needs_ocr"
-                    ? " · 待 OCR"
-                    : doc.status === "ocr_ready"
-                      ? " · 扫描件"
-                      : ""}
-                </small>
-              </span>
-            </button>
-          ))}
-          {!filtered.length && (
-            <p className="muted empty-filter">没有匹配的文献</p>
-          )}
-        </div>
+        )}
         <div className="sidebar-footer">
           <div className="avatar">蔡</div>
           <div>
@@ -537,12 +749,24 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div className="breadcrumb">
+            <button
+              className="layout-toggle"
+              aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+              onClick={() => setSidebarCollapsed((v) => !v)}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen size={18} />
+              ) : (
+                <PanelLeftClose size={18} />
+              )}
+            </button>
             研究空间
             <ChevronRight size={14} />
             <strong>
               {
                 {
                   reader: "文献阅读台",
+                  projects: "研究项目",
                   notes: "证据笔记",
                   audit: "版本复核",
                   library: "文献管理",
@@ -557,6 +781,20 @@ function App() {
             </strong>
           </div>
           <div className="header-actions">
+            {view === "reader" && (
+              <button
+                className="header-tutorial"
+                aria-pressed={focusReading}
+                onClick={() => setFocusReading((v) => !v)}
+              >
+                {focusReading ? (
+                  <Minimize2 size={16} />
+                ) : (
+                  <Maximize2 size={16} />
+                )}
+                {focusReading ? "退出专注" : "专注阅读"}
+              </button>
+            )}
             <button
               type="button"
               className="header-tutorial"
@@ -622,14 +860,79 @@ function App() {
             {toast}
           </div>
         )}
+        {projectContext && (view === "reader" || view === "studio") && (
+          <div className="project-context-banner">
+            <strong>当前项目：{projectContext.title}</strong>
+            <span>
+              问答、综述、方案、矩阵与图稿自动收纳；实验记录可手动关联
+            </span>
+            <button onClick={returnToProject}>返回项目</button>
+            <button
+              onClick={() => {
+                cancelWaiting();
+                setProjectContext(null);
+              }}
+            >
+              退出项目上下文
+            </button>
+          </div>
+        )}
+        {view === "projects" && (
+          <Projects
+            onOpenComparison={(id) => {
+              setBoundaryTarget(id);
+              changeView("notes");
+            }}
+            papers={documents}
+            onTasks={() => changeView("tasks")}
+            onRead={(id) => {
+              const doc = documents.find((d) => d.id === id);
+              if (doc) selectDocument(doc);
+            }}
+            onLocate={(a) =>
+              locate({ ...a, id: a.id || a.block_id || "", text: a.text || "" })
+            }
+            onUse={(p, mode) => {
+              const doc = documents.find((d) => d.id === p.document_ids[0]);
+              if (!doc) return;
+              selectDocument(doc);
+              setProjectContext(p);
+              setScope("multiple");
+              setScopeIds(p.document_ids);
+              setQuestion("");
+              setFocusReading(false);
+              setView(mode);
+            }}
+          />
+        )}
         {workViews.some((v) => v.id === view) || view === "account" ? (
           <Workbench
-            key={view}
+            key={`${view}-${view === "studio" ? projectContext?.id || "general" : ""}`}
             view={view as WorkView}
-            papers={documents}
+            papers={
+              view === "studio" && projectContext
+                ? documents.filter((d) =>
+                    projectContext.document_ids.includes(d.id),
+                  )
+                : documents
+            }
+            projectContext={view === "studio" ? projectContext : null}
             selected={selected}
             onRefresh={refresh}
             onTasks={() => changeView("tasks")}
+            onRead={(id) => {
+              const doc = documents.find((d) => d.id === id);
+              if (doc) selectDocument(doc);
+            }}
+            onCompare={(ids) => {
+              const doc = documents.find((d) => d.id === ids[0]);
+              if (!doc) return;
+              selectDocument(doc);
+              setScope("multiple");
+              setScopeIds(ids);
+              setFocusReading(false);
+              setToast(`已带入 ${ids.length} 篇文献，可以开始提问`);
+            }}
             onLocate={(a: Anchor) =>
               locate({ ...a, id: a.id || a.block_id || "", text: a.text || "" })
             }
@@ -637,23 +940,27 @@ function App() {
         ) : null}
         {view === "reader" && (
           <>
-            <section className="intro">
+            <section className="reader-context-bar" aria-label="阅读工具">
+              <span>原文、问答与证据笔记，在同一处完成。</span>
               <div>
-                <div className="eyebrow">READ. VERIFY. BUILD.</div>
-                <h1>让每个结论，回到证据。</h1>
-                <p>阅读论文，留下出处，在研究变化时重新核验。</p>
-              </div>
-              <div className="collection-summary">
-                <strong>{documents.length.toString().padStart(2, "0")}</strong>
-                <span>
-                  篇文献
-                  <small>
-                    {documents
-                      .reduce((sum, d) => sum + d.pages, 0)
-                      .toLocaleString()}{" "}
-                    页已登记
-                  </small>
-                </span>
+                <button onClick={() => changeView("library")}>
+                  文献库 · {documents.length} 篇
+                </button>
+                <button onClick={() => changeView("translate")}>
+                  双语与引文
+                </button>
+                <label className="reader-width-control">
+                  问答栏宽度
+                  <input
+                    aria-label="问答栏宽度"
+                    type="range"
+                    min="300"
+                    max="480"
+                    step="10"
+                    value={assistantWidth}
+                    onChange={(e) => setAssistantWidth(Number(e.target.value))}
+                  />
+                </label>
               </div>
             </section>
             <label className="mobile-document-select">
@@ -674,12 +981,25 @@ function App() {
                 ))}
               </select>
             </label>
-            <div className="workbench">
+            <div
+              className="workbench"
+              style={
+                {
+                  "--assistant-width": `${assistantWidth}px`,
+                } as React.CSSProperties
+              }
+            >
               <section className="reader-panel">
                 <div className="document-toolbar">
                   <div>
                     <FileText size={16} />
-                    <span>{selected?.name || "选择一篇文献开始"}</span>
+                    <span
+                      title={
+                        selected ? `${selected.title} · ${selected.name}` : ""
+                      }
+                    >
+                      {selected?.title || "选择一篇文献开始"}
+                    </span>
                     {selected?.version && (
                       <span className="version-chip">v{selected.version}</span>
                     )}
@@ -771,6 +1091,13 @@ function App() {
                     value={scope}
                     onChange={(e) => {
                       cancelWaiting();
+                      if (
+                        e.target.value === "all" ||
+                        (e.target.value === "current" &&
+                          selected &&
+                          !projectContext?.document_ids.includes(selected.id))
+                      )
+                        setProjectContext(null);
                       setScope(e.target.value);
                       setAnswer(null);
                     }}
@@ -784,7 +1111,12 @@ function App() {
                       <summary>
                         选择参与对照的论文（已选 {scopeIds.length}）
                       </summary>
-                      {documents.map((d) => (
+                      {(projectContext
+                        ? documents.filter((d) =>
+                            projectContext.document_ids.includes(d.id),
+                          )
+                        : documents
+                      ).map((d) => (
                         <label key={d.id}>
                           <input
                             type="checkbox"
@@ -814,6 +1146,7 @@ function App() {
                 >
                   <textarea
                     aria-label="研究问题"
+                    ref={questionInput}
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
                     onCompositionStart={() => {
@@ -878,11 +1211,51 @@ function App() {
                     </button>
                   </div>
                 </form>
+                {pinnedBlock && (
+                  <section
+                    className="answer-coverage"
+                    aria-label="限定原文补问"
+                  >
+                    <strong>只依据选中原文 · 第{pinnedBlock.page}页</strong>
+                    <p>{pinnedBlock.title}</p>
+                    <p className="result-note">
+                      不会检索全文或其他论文。下方原文是下一次提问的范围；已生成回答以各自标注的范围为准。
+                    </p>
+                    <details>
+                      <summary>核对本次选中的完整原文</summary>
+                      <blockquote>{pinnedBlock.text}</blockquote>
+                    </details>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPinnedBlock(null)}
+                    >
+                      解除限定，恢复当前论文检索
+                    </button>
+                  </section>
+                )}
                 <p className="keyboard-hint">
                   {enterBehavior === "send"
                     ? "Enter 发送 · Shift + Enter 换行"
                     : "Enter 换行 · Ctrl / ⌘ + Enter 发送"}
                 </p>
+                {!pinnedBlock && !pinLoading && (
+                  <BackgroundAnswers
+                    question={question}
+                    ids={
+                      scope === "all"
+                        ? []
+                        : scope === "multiple"
+                          ? scopeIds
+                          : selected
+                            ? [selected.id]
+                            : []
+                    }
+                    projectId={projectContext?.id}
+                    disabled={busy || serviceStatus !== "online"}
+                    onLocate={(anchor) => locate(anchor as Block)}
+                  />
+                )}
                 {!answer && !busy && (
                   <>
                     <div className="suggestion-label">从这些问题开始</div>
@@ -933,6 +1306,12 @@ function App() {
                 )}
                 {answer && (
                   <div className="results">
+                    {answer.source_scope && (
+                      <p className="result-note">
+                        本条回答范围：{answer.source_scope.title} · 第
+                        {answer.source_scope.page}页选中原文。
+                      </p>
+                    )}
                     <div className="results-heading">
                       <strong>
                         {answer.model_answer?.length
@@ -941,10 +1320,36 @@ function App() {
                       </strong>
                       <span>{answer.evidence.length} 条</span>
                     </div>
+                    <AnswerChecklist
+                      value={answer.answer_checklist}
+                      onLocate={(id) => {
+                        const b = answer.evidence.find((b) => b.id === id);
+                        if (b) locate(b);
+                      }}
+                      onFollowup={
+                        answerScope.length
+                          ? (question) =>
+                              prepareQuestion(
+                                {
+                                  id: "check",
+                                  question,
+                                  status: "unresolved",
+                                  claim_count: 0,
+                                },
+                                answerScope,
+                              )
+                          : undefined
+                      }
+                    />
                     {!answer.comparison?.length && (
                       <AnswerCoverage
                         items={answer.subquestions}
                         sources={answer.evidence}
+                        onPrepareQuestion={
+                          answerScope.length
+                            ? (part) => prepareQuestion(part, answerScope)
+                            : undefined
+                        }
                         onLocateEvidence={(id) => {
                           const source = answer.evidence.find(
                             (b) => b.id === id,
@@ -954,64 +1359,66 @@ function App() {
                       />
                     )}
                     {!!answer.comparison?.length && (
-                      <div className="table-scroll comparison-table">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>论文</th>
-                              <th>针对问题的证据</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {answer.comparison.map((row) => (
-                              <tr key={row.document_id}>
-                                <th>
-                                  {row.title}
-                                  <small>{row.name}</small>
-                                </th>
-                                <td>
-                                  <AnswerCoverage
-                                    items={row.subquestions}
-                                    sources={answer.evidence}
-                                    onLocateEvidence={(id) => {
-                                      const source = answer.evidence.find(
-                                        (b) => b.id === id,
-                                      );
-                                      if (source) locate(source);
-                                    }}
-                                  />
-                                  {row.claims.length
-                                    ? row.claims.map((c, i) => (
-                                        <div key={i}>
-                                          <p>{c.text}</p>
-                                          {c.support_span && (
-                                            <details>
-                                              <summary>
-                                                查看支持片段（模型初判）
-                                              </summary>
-                                              <blockquote>
-                                                {c.support_span}
-                                              </blockquote>
-                                            </details>
-                                          )}
-                                          <button
-                                            onClick={() => {
-                                              const b = answer.evidence.find(
-                                                (b) => b.id === c.block_id,
-                                              );
-                                              if (b) locate(b);
-                                            }}
-                                          >
-                                            核对本篇原文
-                                          </button>
-                                        </div>
-                                      ))
-                                    : row.status}
-                                </td>
-                              </tr>
+                      <div className="paper-answers" aria-label="逐篇回答">
+                        {answer.comparison.map((row) => (
+                          <article
+                            className="paper-answer"
+                            key={row.document_id}
+                            data-document-id={row.document_id}
+                          >
+                            <header>
+                              <h3>{row.title}</h3>
+                              <small>{row.name}</small>
+                            </header>
+                            {row.claims.map((c, i) => (
+                              <div className="paper-answer-claim" key={i}>
+                                <p>{c.text}</p>
+                                {c.support_span && (
+                                  <details>
+                                    <summary>查看支持片段（模型初判）</summary>
+                                    <blockquote>{c.support_span}</blockquote>
+                                  </details>
+                                )}
+                                <button
+                                  className="text-button"
+                                  onClick={() => {
+                                    const b = answer.evidence.find(
+                                      (b) => b.id === c.block_id,
+                                    );
+                                    if (b) locate(b);
+                                  }}
+                                >
+                                  核对本篇原文
+                                </button>
+                                {c.source_context?.map((source) => (
+                                  <button
+                                    className="text-button"
+                                    key={source.id}
+                                    onClick={() => locate(source)}
+                                  >
+                                    核对表头／表题 · 第 {source.page} 页
+                                  </button>
+                                ))}
+                              </div>
                             ))}
-                          </tbody>
-                        </table>
+                            {!row.claims.length && (
+                              <p className="result-note">{row.status}</p>
+                            )}
+                            <AnswerCoverage
+                              items={row.subquestions}
+                              sources={answer.evidence}
+                              onPrepareQuestion={(part) =>
+                                prepareQuestion(part, [row.document_id])
+                              }
+                              onLocateEvidence={(id) => {
+                                const source = answer.evidence.find(
+                                  (b) => b.id === id,
+                                );
+                                if (source) locate(source);
+                              }}
+                            />
+                          </article>
+                        ))}
                       </div>
                     )}
                     {(!answer.comparison?.length
@@ -1086,6 +1493,12 @@ function App() {
                           >
                             <Plus size={13} />
                             存为笔记
+                          </button>
+                          <button
+                            disabled={busy || pinLoading}
+                            onClick={() => void pinSource(block)}
+                          >
+                            只依据此段追问
                           </button>
                         </div>
                         {saving === block.id && (
@@ -1174,6 +1587,19 @@ function App() {
                 </button>
               </div>
             ))}
+            <EvidenceRecall
+              notes={notes}
+              onLocate={(anchor) => locate(anchor as Block)}
+            />
+            <Rehearsal
+              notes={notes}
+              onLocate={(anchor) => locate(anchor as Block)}
+            />
+            <EvidenceBoundaries
+              initialId={boundaryTarget}
+              notes={notes}
+              onLocate={(anchor) => locate(anchor as Block)}
+            />
             <div className="notes-grid">
               {notes.map((note) => (
                 <article className="saved-note" key={note.id}>
@@ -1197,7 +1623,7 @@ function App() {
                         onClick={() =>
                           void request(
                             `/api/notes/${note.id}`,
-                            { note: editedNote },
+                            { note: editedNote, expected_note: noteBase },
                             "PATCH",
                           )
                             .then(async () => {
@@ -1210,6 +1636,24 @@ function App() {
                         保存修改
                       </button>
                       <button onClick={() => setEditingNote(null)}>取消</button>
+                      <button
+                        onClick={() =>
+                          void refresh()
+                            .then(() =>
+                              setToast(
+                                "已刷新上方最新笔记，你的草稿仍保留。核对差异后可按下方按钮确认以最新版本继续编辑。",
+                              ),
+                            )
+                            .catch((e) => setError(e.message))
+                        }
+                      >
+                        查看最新笔记，保留草稿
+                      </button>
+                      {noteBase !== note.note && (
+                        <button onClick={() => setNoteBase(note.note)}>
+                          已核对最新笔记，保留草稿继续编辑
+                        </button>
+                      )}
                     </div>
                   )}
                   <blockquote>{note.quote}</blockquote>
@@ -1220,6 +1664,7 @@ function App() {
                       onClick={() => {
                         setEditingNote(note.id);
                         setEditedNote(note.note);
+                        setNoteBase(note.note);
                       }}
                     >
                       编辑观察
@@ -1302,7 +1747,7 @@ function App() {
               <button
                 className="primary-button"
                 disabled={!targetId || busy || !notes.length}
-                onClick={runAudit}
+                onClick={() => void runAudit()}
               >
                 {busy ? (
                   <LoaderCircle className="spin" size={16} />
@@ -1336,13 +1781,93 @@ function App() {
                 </button>
               )}
             </div>
+            {auditResults && (
+              <div className="work-row">
+                {auditResults.some(
+                  (item) => item.semantic_review?.status === "not_checked",
+                ) && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void runAudit(
+                        auditResults
+                          .filter(
+                            (item) =>
+                              item.semantic_review?.status === "not_checked",
+                          )
+                          .slice(0, 12)
+                          .map((item) => item.note.id),
+                      )
+                    }
+                  >
+                    继续复核未检查项
+                  </button>
+                )}
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    downloadText(
+                      "version-review.json",
+                      JSON.stringify(
+                        {
+                          target_document_id: targetId,
+                          exported_at: new Date().toISOString(),
+                          results: auditResults,
+                          warning:
+                            "模型初判需核对原文；未检查和不确定均不代表未变化。",
+                        },
+                        null,
+                        2,
+                      ),
+                      "application/json",
+                    )
+                  }
+                >
+                  导出复核报告
+                </button>
+              </div>
+            )}
             <div className="audit-method">
               <ShieldCheck size={17} />
               <p>
                 先定位两版原文，再由本地模型比较笔记关注的论断。引用存在性会被校验，含义判断仍需结合原文复核；每次最多比较
-                12 条笔记。
+                12 条笔记，可继续分批检查并导出累计报告。
               </p>
             </div>
+            {auditResults && auditResults.length > 0 && (
+              <div className="audit-coverage" role="status">
+                <strong>本次对齐 {auditResults.length} 条证据笔记</strong>
+                <p>
+                  初判未变{" "}
+                  {
+                    auditResults.filter(
+                      (i) => i.semantic_review?.decision === "same_claim",
+                    ).length
+                  }{" "}
+                  条 · 初判变化{" "}
+                  {
+                    auditResults.filter(
+                      (i) => i.semantic_review?.decision === "claim_changed",
+                    ).length
+                  }{" "}
+                  条 · 含义不确定{" "}
+                  {
+                    auditResults.filter(
+                      (i) => i.semantic_review?.decision === "unclear",
+                    ).length
+                  }{" "}
+                  条 · 未取得含义判断{" "}
+                  {
+                    auditResults.filter((i) => !i.semantic_review?.decision)
+                      .length
+                  }{" "}
+                  条
+                </p>
+                <small>
+                  这些是处理状态，不是准确率；不确定和未检查项不能视作“没有变化”。
+                </small>
+              </div>
+            )}
             {auditResults?.map((item) => (
               <article className="audit-card" key={item.note.id}>
                 <div className="audit-title">
@@ -1354,11 +1879,13 @@ function App() {
                       ? `论断未见变化 · ${item.semantic_review.method ? "原文规则核对" : "模型初判"}`
                       : item.semantic_review?.decision === "claim_changed"
                         ? `论断有变化 · ${item.semantic_review.method ? "原文规则核对" : "模型初判"}`
-                        : {
-                            retained: "原文保留",
-                            review_required: "需要复核",
-                            unlocated: "尚未定位",
-                          }[item.status]}
+                        : item.semantic_review?.decision === "unclear"
+                          ? "含义不确定 · 需要人工核对"
+                          : {
+                              retained: "原文保留",
+                              review_required: "需要复核",
+                              unlocated: "尚未定位",
+                            }[item.status]}
                   </span>
                 </div>
                 <p>{item.explanation}</p>
@@ -1376,6 +1903,7 @@ function App() {
                     </div>
                   </div>
                 )}
+                <ReviewEvidence review={item.semantic_review} />
                 <div className="comparison">
                   <div>
                     <small>保存的证据 · v{item.note.version}</small>

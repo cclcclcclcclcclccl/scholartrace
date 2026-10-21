@@ -7,7 +7,7 @@ import hashlib
 import re
 import uuid
 from collections import Counter
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import httpx
 from defusedxml import ElementTree as ET
 from . import database, jobs, store
@@ -66,6 +66,9 @@ async def search(
                         + params["search_query"]
                         + f") AND submittedDate:[{year_from or 1900}01010000 TO {year_to or dt.datetime.now().year}12312359]"
                     )
+                exact_id = re.fullmatch(r"id:((?:\d{4}\.\d{4,5}|[a-z-]+/\d{7})(?:v\d+)?)", query)
+                if exact_id:
+                    params = {"id_list": exact_id[1], "max_results": 1}
                 for attempt in range(3):
                     response = await client.get(
                         "https://export.arxiv.org/api/query", params=params
@@ -93,7 +96,7 @@ async def search(
                     return store.normalize(entry.findtext(name, "", NS))
 
                 link = value("a:id")
-                identifier = link.rsplit("/", 1)[-1]
+                identifier = re.sub(r"^https?://[^/]+/abs/", "", link)
                 if not re.fullmatch(
                     r"(?:\d{4}\.\d{4,5}|[a-z-]+/\d{7})(?:v\d+)?", identifier
                 ):
@@ -123,7 +126,7 @@ async def search(
                     }
                 )
         elif source == "crossref":
-            params = {"query.bibliographic": query, "rows": limit, "offset": start}
+            params = {"query.title" if query.startswith("title:") else "query.bibliographic": query[6:] if query.startswith("title:") else query, "rows": limit, "offset": start}
             filters = []
             if year_from:
                 filters.append(f"from-pub-date:{year_from}-01-01")
@@ -133,9 +136,17 @@ async def search(
                 params["filter"] = ",".join(filters)
             if latest:
                 params.update(sort="published", order="desc")
-            response = await client.get("https://api.crossref.org/works", params=params)
+            exact_doi = query.startswith("doi:")
+            response = await client.get(
+                "https://api.crossref.org/works/" + quote(query[4:], safe="")
+                if exact_doi else "https://api.crossref.org/works",
+                params={} if exact_doi else params,
+            )
+            if exact_doi and response.status_code == 404:
+                return []
             response.raise_for_status()
-            for item in response.json()["message"]["items"]:
+            message = response.json()["message"]
+            for item in ([message] if exact_doi else message["items"]):
                 doi = item.get("DOI", "")
                 parts = item.get("published", {}).get("date-parts", [[]])[0]
                 papers.append(
@@ -152,6 +163,7 @@ async def search(
                         "url": "https://doi.org/" + doi,
                         "pdf_url": None,
                         "source": "Crossref",
+                        "record_type": item.get("type", "unknown"),
                         "doi": doi,
                         "github": [],
                     }
@@ -159,7 +171,8 @@ async def search(
         else:
             raise ValueError("数据源须为 arxiv 或 crossref")
     votes = feedback_scores()
-    for p in papers:
+    for rank, p in enumerate(papers):
+        p["provider_rank"] = rank
         p["vote"] = votes.get(p["id"], 0)
     # Stable provider ranking within each preference group; no invented relevance score.
     papers.sort(key=lambda p: p["vote"], reverse=True)
@@ -187,7 +200,7 @@ async def search_cached(
     )
     key = (
         "discovery_cache:"
-        + hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()
+        + hashlib.sha256(json.dumps({"schema": 3, **args}, sort_keys=True).encode()).hexdigest()
     )
     cached = database.preference(key, None)
     now = dt.datetime.now(dt.timezone.utc)
@@ -204,7 +217,7 @@ async def search_cached(
                 raise
             papers, status = cached["papers"], "stale_after_error"
     votes = feedback_scores()
-    return [
+    ranked = [
         {
             **p,
             "vote": votes.get(p["id"], 0),
@@ -213,6 +226,8 @@ async def search_cached(
         }
         for p in papers
     ]
+    ranked.sort(key=lambda p: (-p["vote"], p.get("provider_rank", len(ranked))))
+    return ranked
 
 
 def remote(identifier):
@@ -390,7 +405,10 @@ async def download(ctx, payload):
                 "UPDATE documents SET metadata=? WHERE id=?",
                 (json.dumps(meta, ensure_ascii=False), record["id"]),
             )
-        jobs.submit("index", {"document_ids": [record["id"]]})
+        if not record.get("already_exists") and meta.get("pages_without_text"):
+            jobs.submit("ocr", {"document_id": record["id"]})
+        else:
+            jobs.submit("index", {"document_ids": [record["id"]]})
         record.pop("path", None)
         return record
     except BaseException:

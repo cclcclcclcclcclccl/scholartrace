@@ -7,6 +7,49 @@ from difflib import SequenceMatcher
 from . import store
 
 
+def retain_stage_heading(span, quote, maximum=1600):
+    """Keep a literal leading stage heading with its sentence, never invent it.
+
+    Only one stage may govern the contiguous prefix. No detached title from a
+    different block is borrowed, and a long prefix stays subject to the limit.
+    """
+    source = store.quote_normalize(quote)
+    span = store.quote_normalize(span)
+    if not span or not re.match(
+        r"(?:Stage|Phase|Step)\s+\d+\s*[:.]", source, re.IGNORECASE
+    ):
+        return span
+    start = source.find(span)
+    if start < 0:
+        return span
+    prefix = source[: start + len(span)]
+    if (
+        len(prefix) <= maximum
+        and len(
+            re.findall(r"\b(?:Stage|Phase|Step)\s+\d+\s*[:.]", prefix, re.IGNORECASE)
+        )
+        == 1
+    ):
+        return prefix
+    return span
+
+
+def stage_label_mismatch(claim, quote):
+    """A numbered stage is a scope label, not any matching number in the text."""
+    source = store.quote_normalize(quote)
+    heading = re.match(r"(Stage|Phase|Step)\s+(\d+)\s*[:.]", source, re.IGNORECASE)
+    if (
+        not heading
+        or len(
+            re.findall(r"\b(?:Stage|Phase|Step)\s+\d+\s*[:.]", source, re.IGNORECASE)
+        )
+        != 1
+    ):
+        return False
+    claimed = re.findall(r"\b" + heading[1] + r"\s+(\d+)\b", claim, re.IGNORECASE)
+    return any(number != heading[2] for number in claimed)
+
+
 def support_passages(quote, maximum=1600):
     """Offer source-only spans so a reviewer cannot rewrite a table or quotation."""
     source = store.quote_normalize(quote)
@@ -20,11 +63,43 @@ def support_passages(quote, maximum=1600):
         candidates.extend(
             source[i : i + maximum] for i in range(0, len(source), maximum // 2)
         )
-    return [""] + list(dict.fromkeys(s for s in candidates if 12 <= len(s) <= maximum))
+    return [""] + list(
+        dict.fromkeys(
+            retain_stage_heading(s, source, maximum)
+            for s in candidates
+            if 12 <= len(s) <= maximum
+        )
+    )
+
+
+def unsupported_qualifiers(claim, source):
+    """Observable qualifiers require explicit support in this citation."""
+    pairs = [
+        (
+            r"未(?:经)?筛选|未过滤|未经筛选|unfiltered",
+            r"unfiltered|not filtered|without filtering|未筛选|未过滤",
+        ),
+        (
+            r"未整理|未经整理|uncurated",
+            r"uncurated|not curated|without curation|未整理",
+        ),
+        (r"随机采样|随机抽样|random(?:ly)? sampl", r"random|随机"),
+        (
+            r"统计显著|显著性|statistically significant",
+            r"significan|p[ -]?value|统计显著|显著性",
+        ),
+        (r"因果关系|causal relationship", r"causal|causality|因果"),
+    ]
+    return any(
+        re.search(a, claim, re.IGNORECASE) and not re.search(b, source, re.IGNORECASE)
+        for a, b in pairs
+    )
 
 
 def semantic_overreach(claim, quote):
     """Training sequences do not establish the model's supported context limit."""
+    from .quantity_roles import named_update_count_mismatch
+
     window_claim = re.search(
         r"上下文(?:窗口|长度|上限)|最大(?:输入|序列)长度|context\s+(?:window|length|limit)",
         claim,
@@ -40,9 +115,73 @@ def semantic_overreach(claim, quote):
         quote,
         re.IGNORECASE,
     )
-    return bool(
-        window_claim and training_source and not context_source
-    ) or negative_result_mismatch(claim, quote)
+    return (
+        bool(window_claim and training_source and not context_source)
+        or negative_result_mismatch(claim, quote)
+        or unsupported_qualifiers(claim, quote)
+        or illustrative_value_overreach(claim, quote)
+        or counted_subject_mismatch(claim, quote)
+        or query_membership_overreach(claim, quote)
+        or staged_precision_mismatch(claim, quote)
+        or stage_label_mismatch(claim, quote)
+        or named_update_count_mismatch(claim, quote)
+    )
+
+
+def staged_precision_mismatch(claim, source):
+    """Check only explicit, unambiguous training/inference bit-width assignments.
+
+    Number membership cannot detect values exchanged between two stages. Ambiguous
+    alternatives remain for semantic review instead of guessing a stage assignment.
+    """
+
+    def assignments(text):
+        result = {"training": set(), "inference": set()}
+        for clause in re.split(
+            r"\b(?:and|but|whereas|while)\b|[，。；;]", text, flags=re.IGNORECASE
+        ):
+            for stage, chinese in (("training", "训练"), ("inference", "推理")):
+                patterns = (
+                    rf"\b{stage}\b[^\d.;]{{0,35}}?(\d+)\s*[- ]?\s*bits?\b",
+                    rf"\b(\d+)\s*[- ]?\s*bits?\b[^.;]{{0,40}}?\b(?:during|for|in)\s+{stage}\b",
+                    rf"{chinese}(?:阶段|时)?[^\d，。；]{{0,20}}?(\d+)\s*(?:位|bits?\b)",
+                )
+                for pattern in patterns:
+                    matches = re.findall(pattern, clause, flags=re.IGNORECASE)
+                    result[stage].update(matches)
+                    if matches and re.search(r"\bor\b|或", clause, re.IGNORECASE):
+                        result[stage].update(
+                            re.findall(
+                                r"(\d+)\s*[- ]?\s*(?:bits?\b|位)", clause, re.IGNORECASE
+                            )
+                        )
+        return result
+
+    asked, cited = assignments(claim), assignments(store.quote_normalize(source))
+    return any(
+        len(asked[stage]) == len(cited[stage]) == 1 and asked[stage] != cited[stage]
+        for stage in asked
+    )
+
+
+def illustrative_value_overreach(claim, source):
+    """An explicitly illustrative number does not establish a default setting."""
+    source = unicodedata.normalize("NFKC", source)
+    illustrative = re.search(
+        r"\bhere\s*,|for (?:illustration|illustrative purposes)|toy example|示意|示例",
+        source,
+        re.IGNORECASE,
+    )
+    generalized = re.search(
+        r"默认|实际配置|默认配置|default|actual configuration|\d", claim, re.IGNORECASE
+    )
+    qualified = re.search(
+        r"示意|示例|图中|illustrat|example|in the figure", claim, re.IGNORECASE
+    )
+    explicit_default = re.search(
+        r"default|actual configuration|默认|实际配置", source, re.IGNORECASE
+    )
+    return bool(illustrative and generalized and not qualified and not explicit_default)
 
 
 def negative_result_mismatch(claim, quote):
@@ -90,6 +229,14 @@ def negative_result_mismatch(claim, quote):
         return True
     if re.search(r"最优", claim) and not re.search(
         r"optimal|optimum|最优", source, re.IGNORECASE
+    ):
+        return True
+    if re.search(
+        r"更快|加速|速度.{0,8}(?:提高|提升)|\bfaster\b|speed.?up", claim, re.IGNORECASE
+    ) and not re.search(
+        r"\bfast\w*\b|speed|latency|throughput|wall.?clock|runtime|running time|execution time|加速|速度|吞吐|延迟|耗时",
+        source,
+        re.IGNORECASE,
     ):
         return True
     if re.search(r"(?:运行时间|耗时|时间复杂度).{0,35}线性", claim) and not re.search(
@@ -149,6 +296,11 @@ def duplicate_claim(text, block_id, accepted):
         polarity = r"不|无|未|没有|not|never|without"
         if bool(re.search(polarity, text, re.IGNORECASE)) != bool(
             re.search(polarity, old["text"], re.IGNORECASE)
+        ):
+            continue
+        # Different named entities must survive until their individual source review.
+        if set(re.findall(r"[A-Za-z][A-Za-z0-9_-]*", text.casefold())) != set(
+            re.findall(r"[A-Za-z][A-Za-z0-9_-]*", old["text"].casefold())
         ):
             continue
         previous = re.sub(r"[^\w]", "", old["text"]).casefold()
@@ -212,7 +364,12 @@ def prune_repeated_facts(claims):
         redundant = False
         if own and simple(claim["text"]):
             for j, other in enumerate(claims):
-                if i == j or claim["block_id"] != other["block_id"]:
+                if (
+                    i == j
+                    or claim["block_id"] != other["block_id"]
+                    or claim.get("document_id") != other.get("document_id")
+                    or claim.get("part_id") != other.get("part_id")
+                ):
                     continue
                 if entities(claim["text"]) != entities(other["text"]):
                     continue
@@ -233,3 +390,112 @@ def prune_repeated_facts(claims):
         if not redundant:
             result.append(claim)
     return result
+
+
+def named_paper_owners(question, papers):
+    """Conservative entity ownership from the selected papers' opening pages.
+
+    Only a strongly dominant explicit name creates a rejection constraint. This
+    is not a general entity linker or a positive support test.
+    """
+    names = set(re.findall(r"(?<![A-Za-z0-9])[A-Z][A-Za-z0-9_-]{2,}", question))
+    owners = {}
+    for name in names:
+        pattern = r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])"
+        counts = sorted(
+            [
+                (len(re.findall(pattern, text, re.IGNORECASE)), identifier)
+                for identifier, text in papers.items()
+            ],
+            reverse=True,
+        )
+        if len(counts) < 2:
+            continue
+        if counts[0][0] >= 2 and counts[0][0] > 3 * counts[1][0]:
+            owners[name] = counts[0][1]
+    return owners
+
+
+def foreign_paper_subject(claim, document_id, owners):
+    """Reject only clear leading subject attribution, not any comparison mention."""
+    for name, owner in owners.items():
+        if owner != document_id and re.search(
+            r"^\s*" + re.escape(name) + r"(?![A-Za-z0-9])", claim, re.IGNORECASE
+        ):
+            return True
+    return False
+
+
+def counted_subject_mismatch(claim, source):
+    """Narrow count-subject checks, not a general entailment test."""
+    if re.search(r"(?:一个|单个|一名|1\s*个)专家", claim) and not re.search(
+        r"(?:single|one|1)\s+(?:FFN\s+)?expert|k\s*=\s*1|一个专家|单个专家",
+        source,
+        re.IGNORECASE,
+    ):
+        return True
+    return bool(
+        re.search(r"(?:来源.{0,12}数百|数百.{0,12}来源)", claim)
+        and not re.search(
+            r"hundreds?\s+of\s+(?:data\s+)?sources|数百.{0,12}来源",
+            source,
+            re.IGNORECASE,
+        )
+    )
+
+
+def repair_citation_candidates(claims, blocks):
+    """Propose a unique numeric-compatible source; ordinary review still follows.
+
+    Never synthesize text or merge excerpts. Ambiguous alternatives remain unchanged.
+    """
+    from .numeric_evidence import unsupported_numbers
+
+    repaired = []
+    for claim in claims:
+        match = re.fullmatch(r"E(\d+)", str(claim.get("evidence_id", "")))
+        if not match or not 0 <= int(match[1]) - 1 < len(blocks):
+            repaired.append(claim)
+            continue
+        index = int(match[1]) - 1
+        text = claim.get("text", "")
+        if not isinstance(text, str):
+            repaired.append(claim)
+            continue
+
+        def compatible(block, candidate_text=text):
+            return not unsupported_numbers(
+                candidate_text,
+                block["text"],
+                source_title=block.get("title", ""),
+                source_page=block.get("page"),
+            ) and not semantic_overreach(candidate_text, block["text"])
+
+        if unsupported_numbers(
+            text,
+            blocks[index]["text"],
+            source_title=blocks[index].get("title", ""),
+            source_page=blocks[index].get("page"),
+        ):
+            candidates = [
+                i for i, block in enumerate(blocks) if i != index and compatible(block)
+            ]
+            if len(candidates) == 1:
+                claim = {
+                    **claim,
+                    "evidence_id": f"E{candidates[0] + 1}",
+                    "proposed_previous_evidence_id": claim["evidence_id"],
+                }
+        repaired.append(claim)
+    return repaired
+
+
+def query_membership_overreach(claim, source):
+    """Do not turn membership in a query set into matching the whole set."""
+    return bool(
+        re.search(r"one of (?:a|the) set of [\d,]+ queries", source, re.IGNORECASE)
+        and re.search(r"(?:包含|匹配|搜索).{0,25}查询", claim)
+        and not re.search(
+            r"之一|任一|任意一个|其中一个|集合中|one of", claim, re.IGNORECASE
+        )
+    )

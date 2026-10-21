@@ -3,8 +3,16 @@
 import json
 import re
 from difflib import SequenceMatcher
+
 import httpx
 
+from .review_checks import (
+    canonical_durations,
+    consistency_warnings,
+    identical_focused_fact,
+    observation_warning,
+    source_scope_warning,
+)
 from .store import quote_in_source, quote_normalize
 
 
@@ -47,7 +55,7 @@ def planned_code_release(sentence):
     if re.search(
         r"\b(?:not|never|no|cannot|can't|won't|don't|doesn't|didn't|may|might|if)\b",
         sentence,
-        re.I,
+        re.IGNORECASE,
     ):
         return False
     code = r"(?:the\s+|our\s+)?code(?:\s+(?:that\s+)?(?:we|they)\s+used(?:\s+[A-Za-z]+){0,12})?"
@@ -57,7 +65,7 @@ def planned_code_release(sentence):
             rf"|\bwill\s+(?:release\s+{code}|make\s+{code}\s+available)\b"
             r"|\bcode\s+will\s+be\s+(?:released|available)\b",
             sentence,
-            re.I,
+            re.IGNORECASE,
         )
     )
 
@@ -69,6 +77,45 @@ async def review_change(
         return {"status": "unavailable", "reason": "未可靠对齐原文，需人工核验。"}
     original = item["note"]["quote"]
     updated = item["candidate"]["text"]
+
+    observation = item["note"]["note"]
+    scope_warning = source_scope_warning(observation, original, updated)
+    if scope_warning:
+        return {
+            "status": "model_assessment",
+            "decision": "unclear",
+            "reason": scope_warning["reason"],
+            "consistency_warnings": [scope_warning],
+            "old_quote": original,
+            "new_quote": updated,
+            "source_quotes_verified": True,
+            "method": "source_scope_guard",
+        }
+    if quote_normalize(original) != quote_normalize(updated) and canonical_durations(
+        original
+    ) == canonical_durations(updated):
+        return {
+            "status": "model_assessment",
+            "decision": "same_claim",
+            "reason": "完整比较句仅为明确时长单位的等价换算；保留了计量对象与其他条件。",
+            "old_quote": original,
+            "new_quote": updated,
+            "source_quotes_verified": True,
+            "method": "explicit_duration_equivalence",
+        }
+    same_fact = identical_focused_fact(observation, original, updated)
+    if same_fact and quote_normalize(original) != quote_normalize(updated):
+        return {
+            "status": "model_assessment",
+            "decision": "same_claim",
+            "reason": "观察所指的独立数值句在两版相同；其他句子的变更不直接改变该数值句，全文适用条件仍需核对。",
+            "old_quote": "\n[…]\n".join(same_fact),
+            "new_quote": "\n[…]\n".join(same_fact),
+            "old_quotes": same_fact,
+            "new_quotes": same_fact,
+            "source_quotes_verified": True,
+            "method": "identical_scoped_numeric_sentence",
+        }
 
     def prose(text):
         return re.sub(
@@ -104,7 +151,9 @@ async def review_change(
     # A directly stated release transition is observable text evidence. A small
     # model must not turn future intent and an existing download URL into "same".
     observation = item["note"]["note"]
-    if re.search(r"代码|开源|发布|公开|code|release|availability", observation, re.I):
+    if re.search(
+        r"代码|开源|发布|公开|code|release|availability", observation, re.IGNORECASE
+    ):
         old_release = next(
             (s for s in old_sentences if planned_code_release(s)),
             None,
@@ -116,9 +165,9 @@ async def review_change(
                 if re.search(
                     r"\bcode(?:\s+(?:that\s+)?(?:we|they)\s+used(?:\s+[A-Za-z]+){0,12})?\s+is (?:now )?available at https?://",
                     s,
-                    re.I,
+                    re.IGNORECASE,
                 )
-                and not re.search(r"\b(?:not|never|may|might|if)\b", s, re.I)
+                and not re.search(r"\b(?:not|never|may|might|if)\b", s, re.IGNORECASE)
             ),
             None,
         )
@@ -245,7 +294,7 @@ async def review_change(
             ):
                 raise ValueError("Review citation is absent from original source")
         if not isinstance(value.get("reason"), str):
-            raise ValueError("Missing reason")
+            raise TypeError("Missing reason")
         if value["decision"] == "claim_changed" and quote_normalize(
             value["old_quote"]
         ) == quote_normalize(value["new_quote"]):
@@ -257,6 +306,32 @@ async def review_change(
                 "reason": "模型所引的两段文字相同，无法支持变化判断；需结合上下文复核。",
                 "source_quotes_verified": True,
             }
+        if value["decision"] == "claim_changed":
+            warning = observation_warning(
+                observation, original, updated, value["old_quote"], value["new_quote"]
+            )
+            if warning:
+                return {
+                    "status": "model_assessment",
+                    **value,
+                    "decision": "unclear",
+                    "raw_model_decision": "claim_changed",
+                    "reason": "比较引文与笔记关注点未充分对应，已暂缓变化判断。",
+                    "consistency_warnings": [warning],
+                    "source_quotes_verified": True,
+                }
+        if value["decision"] == "same_claim":
+            warnings = consistency_warnings(value["old_quote"], value["new_quote"])
+            if warnings:
+                return {
+                    "status": "model_assessment",
+                    **value,
+                    "decision": "unclear",
+                    "raw_model_decision": "same_claim",
+                    "reason": "一致性检查发现两侧引文有差异，已暂缓模型的“未见变化”判断。请核对下面的比较句及完整上下文。",
+                    "consistency_warnings": warnings,
+                    "source_quotes_verified": True,
+                }
         return {"status": "model_assessment", **value, "source_quotes_verified": True}
     except (
         httpx.HTTPError,

@@ -110,6 +110,8 @@ def dense(question, document_ids, limit=35):
 
 
 def search(question, document_ids=None, limit=10):
+    if store.numeric_literal(question) is not None:
+        return store.search(question, document_ids, limit)
     ids = document_ids or []
     if len(ids) > 1:
         lexical = [

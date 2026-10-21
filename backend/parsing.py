@@ -7,7 +7,7 @@ import re
 from collections import Counter
 import numpy as np
 import pymupdf
-from . import store, jobs, model
+from . import store, jobs, model, ocr_supplement
 
 
 def stored(identifier):
@@ -385,13 +385,14 @@ _ocr = None
 
 def ocr_page(record, number):
     global _ocr
+    ocr_supplement.selected_pages(record, number)
+    existing = store.get_blocks(record["id"], number)
+    if any(b["method"] == "rapidocr" for b in existing):
+        return {"page": number, "preserved": True}
     from rapidocr import RapidOCR
 
     if _ocr is None:
         _ocr = RapidOCR(params={"Global.text_score": 0.5})
-    existing = store.get_blocks(record["id"], number)
-    if any(b["method"] == "rapidocr" for b in existing):
-        return {"page": number, "preserved": True}
     with pymupdf.open(record["path"]) as pdf:
         page = pdf[number - 1]
         pix = page.get_pixmap(dpi=150, alpha=False)
@@ -403,6 +404,8 @@ def ocr_page(record, number):
         lines = []
         if output.boxes is not None:
             for box, text, confidence in zip(output.boxes, output.txts, output.scores):
+                if not text.strip():
+                    continue
                 xy = np.asarray(box)
                 x0, y0 = xy.min(axis=0)
                 x1, y1 = xy.max(axis=0)
@@ -418,6 +421,13 @@ def ocr_page(record, number):
                         ],
                     }
                 )
+        recognized = list(lines)
+        native = [b for b in existing if b["method"] == "native"]
+        lines = [
+            line
+            for line in lines
+            if not ocr_supplement.duplicates_native(line, native, page.rotation_matrix)
+        ]
         lines.sort(key=lambda l: (round(l["bbox"][1] / 10), l["bbox"][0]))
         groups = []
         for line in lines:
@@ -446,7 +456,7 @@ def ocr_page(record, number):
                     identifier,
                     record["id"],
                     number,
-                    i,
+                    max((b["ordinal"] for b in existing), default=-1) + 1 + i,
                     "\n".join(l["text"] for l in group),
                     json.dumps(bbox),
                     page.rect.width,
@@ -455,35 +465,50 @@ def ocr_page(record, number):
                 )
             )
         with store.connection() as conn:
-            conn.executemany(
-                "INSERT OR IGNORE INTO blocks VALUES(?,?,?,?,?,?,?,?,?)", rows
-            )
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute(
+                "SELECT 1 FROM blocks WHERE document_id=? AND page=? AND method='rapidocr' LIMIT 1",
+                (record["id"], number),
+            ).fetchone():
+                return {"page": number, "preserved": True}
+            conn.executemany("INSERT INTO blocks VALUES(?,?,?,?,?,?,?,?,?)", rows)
             conn.executemany(
                 "INSERT INTO block_search(block_id,document_id,text) VALUES(?,?,?)",
                 [(r[0], r[1], r[4]) for r in rows],
             )
-            meta = store.get_document(record["id"])["metadata"]
+            meta = json.loads(
+                conn.execute(
+                    "SELECT metadata FROM documents WHERE id=?", (record["id"],)
+                ).fetchone()[0]
+            )
             done = set(meta.get("ocr_pages", []))
             done.add(number)
             if not lines:
                 done.discard(number)
             meta["ocr_pages"] = sorted(done)
             meta.setdefault("ocr_quality", {})[str(number)] = {
-                "confidence": round(float(np.mean([l["confidence"] for l in lines])), 4)
-                if lines
+                "confidence": round(
+                    float(np.mean([l["confidence"] for l in lines or recognized])), 4
+                )
+                if recognized
                 else 0,
-                "lines": len(lines),
+                "lines": len(recognized),
+                "added_lines": len(lines),
+                "duplicates_skipped": len(recognized) - len(lines),
+                "supplemental": bool(native),
                 "warning": None
                 if lines
+                else "未新增文字；识别内容与原生文字的位置和文本一致"
+                if recognized
                 else "未识别文字；可能为空白页或识别失败，需看原图",
             }
             status = (
-                "ocr_ready"
-                if set(meta["pages_without_text"]) <= done
+                ("ocr_ready" if done else "text_ready")
+                if set(meta.get("pages_without_text", [])) <= done
                 else "partial_ocr"
             )
             conn.execute(
-                "UPDATE documents SET metadata=?,status=?,chars=(SELECT SUM(LENGTH(text)) FROM blocks WHERE document_id=?) WHERE id=?",
+                "UPDATE documents SET metadata=?,status=?,chars=(SELECT COALESCE(SUM(LENGTH(text)),0) FROM blocks WHERE document_id=?) WHERE id=?",
                 (
                     json.dumps(meta, ensure_ascii=False),
                     status,
@@ -492,7 +517,7 @@ def ocr_page(record, number):
                 ),
             )
             conn.execute("DELETE FROM structures WHERE document_id=?", (record["id"],))
-            if number == 1 and lines:
+            if number == 1 and lines and sum(len(b["text"]) for b in native) < 20:
                 title_candidates = [
                     l
                     for l in lines
@@ -520,7 +545,13 @@ def ocr_page(record, number):
                         "UPDATE documents SET arxiv_id=?,version=? WHERE id=?",
                         (arxiv.group(1), int(arxiv.group(2)), record["id"]),
                     )
-    return {"page": number, "lines": len(lines), "blocks": len(rows)}
+    return {
+        "page": number,
+        "lines": len(recognized),
+        "added_lines": len(lines),
+        "duplicates_skipped": len(recognized) - len(lines),
+        "blocks": len(rows),
+    }
 
 
 ocr_gate = asyncio.Semaphore(1)
@@ -530,7 +561,7 @@ ocr_gate = asyncio.Semaphore(1)
 async def ocr(ctx, payload):
     async with ocr_gate:
         record = store.get_document(payload["document_id"])
-        pages = record["metadata"]["pages_without_text"]
+        pages = ocr_supplement.selected_pages(record, payload.get("page"))
         results = []
         for i, number in enumerate(pages):
             ctx.progress(i / max(1, len(pages)), f"OCR 识别：第 {number} 页")

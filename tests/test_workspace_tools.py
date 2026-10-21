@@ -35,6 +35,8 @@ def client(tmp_path, monkeypatch):
 
 @pytest.fixture
 def paper(client):
+    if not (store.ROOT / "data/competition/pdf/1706.03762v1.pdf").exists():
+        pytest.skip("Official corpus absent; see docs/测试资料准备.md")
     return store.import_pdf(store.ROOT / "data/competition/pdf/1706.03762v1.pdf")
 
 

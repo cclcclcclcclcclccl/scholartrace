@@ -1,0 +1,28 @@
+{
+  "notice": "Frozen before first run on 2026-10-14. Developer-authored multi-document workflow regression derived from known subjects; not an independent accuracy benchmark. Do not alter expectations after seeing results.",
+  "cases": [
+    {
+      "id": "attention_versions_partial_coverage",
+      "files": ["1706.03762v1.pdf", "1706.03762v7.pdf"],
+      "question": "模型训练用了哪些 GPU？论文有没有报告 base 模型随机种子 42 的那一次独立训练的 BLEU 分数？后者不能用汇总结果代替，缺证据也请保留第一项的回答。",
+      "required_patterns": ["P100"],
+      "per_file_patterns": {"1706.03762v1.pdf": ["P100"], "1706.03762v7.pdf": ["P100"]},
+      "expected_parts": 2,
+      "unresolved_parts": ["Q2"],
+      "forbidden_patterns": ["种子\\s*42[^。]{0,35}BLEU(?:分数)?(?:为|是|达到)\\s*\\d"],
+      "source_blocks": [],
+      "expected": "Both versions describe eight NVIDIA P100 GPUs. Do not invent a seed42 individual base run; show both original subquestions for each paper, with Q2 unresolved."
+    },
+    {
+      "id": "gpt4_vit_distinct_fields",
+      "files": ["2303.08774v6.pdf", "2010.11929v2.pdf"],
+      "question": "GPT-4 的输入和输出分别是什么？ViT-Base 在表 1 中的层数、隐藏宽度和参数量分别是多少？请逐篇提供证据，不要把一篇论文的数值或能力归给另一篇。",
+      "required_patterns": ["图像|图片", "文本|文字", "12", "768", "86\\s*[Mm]|8600万"],
+      "per_file_patterns": {"2303.08774v6.pdf": ["图像|图片", "文本|文字", "输入", "输出"], "2010.11929v2.pdf": ["12", "768", "86\\s*[Mm]|8600万"]},
+      "per_file_forbidden_patterns": {"2303.08774v6.pdf": ["768", "86\\s*[Mm]|8600万", "(?:生成|输出)(?:文本和|文字和)?图像"], "2010.11929v2.pdf": ["GPT.?4.{0,15}(?:接受|输出|生成)"]},
+      "expected_parts": 2,
+      "source_blocks": [],
+      "expected": "GPT4 report supports image/text inputs and text output; ViT table1 supports Base 12/768/86M. Keep per-paper source identity and original questions; unresolved means this scoped run has no reviewed answer, not a global lack of an answer."
+    }
+  ]
+}

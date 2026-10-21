@@ -1,0 +1,103 @@
+.research-tasks {
+  margin: 24px 0;
+  padding: 20px;
+  border: 1px solid #c6d8cf;
+  border-radius: 14px;
+  background: #f5f8f6;
+  min-width: 0;
+}
+.research-tasks p {
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.research-tasks button {
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid #c6d8cf;
+  background: white;
+  color: #255346;
+  cursor: pointer;
+}
+.research-tasks button.primary-button {
+  background: #1c5445;
+  color: white;
+}
+.research-tasks button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.research-task,
+.research-task-editor {
+  background: white;
+  padding: 16px;
+  margin: 14px 0;
+  border: 1px solid #d4e0d9;
+  border-radius: 10px;
+}
+.research-tasks summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: 12px 0;
+}
+.research-task-editor > label {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.research-task-editor textarea,
+.research-task-editor select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #b8cec4;
+  border-radius: 8px;
+  font: inherit;
+  background: white;
+}
+.research-task-editor textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+.research-tasks blockquote {
+  margin: 12px 0;
+  padding: 12px;
+  background: #f0f5f2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+  line-height: 1.8;
+  border-left: 3px solid #729a8a;
+}
+.task-state {
+  border-radius: 20px;
+  padding: 4px 10px;
+  background: #e9eef1;
+}
+.task-state.done {
+  background: #dcefe1;
+}
+.task-state.dismissed {
+  background: #fff0d7;
+}
+.task-event {
+  padding: 10px 0;
+  border-bottom: 1px solid #e2ebe5;
+}
+.task-conflict {
+  background: #fff4dc;
+  padding: 14px;
+  margin-top: 12px;
+}
+.research-tasks :focus-visible {
+  outline: 3px solid #729a8a;
+  outline-offset: 2px;
+}
+@media (max-width: 600px) {
+  .research-tasks,
+  .research-task,
+  .research-task-editor {
+    padding: 12px;
+  }
+}

@@ -40,6 +40,8 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.fixture
 def paper(isolated):
+    if not (CORPUS / "1706.03762v1.pdf").exists():
+        pytest.skip("Official corpus absent; see docs/测试资料准备.md")
     return store.import_pdf(CORPUS / "1706.03762v1.pdf")
 
 
@@ -182,7 +184,7 @@ def test_fixed_radar_normalization_and_non_numeric_rejection(isolated):
 
 def test_translation_preserves_numbers_and_code_or_fails(isolated, monkeypatch):
     async def valid(*args, **kwargs):
-        return {"translation": args[1]}
+        return {"translation": "使用 " + args[1]}
 
     monkeypatch.setattr(model, "complete", valid)
     assert "`print(8)`" in asyncio.run(
@@ -463,7 +465,7 @@ def test_tracker_paginates_overlapping_window_and_deduplicates(isolated, monkeyp
     )
 
 
-def test_translation_splits_difficult_paragraph_without_losing_numerals(monkeypatch):
+def test_translation_splits_difficult_paragraph_without_losing_numerals(monkeypatch, isolated):
     calls = []
 
     async def complete(system, prompt, **kwargs):

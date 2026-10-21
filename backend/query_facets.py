@@ -5,6 +5,16 @@ import re
 from . import store
 
 CONCEPTS = [
+    (
+        r"数据.{0,15}(?:规模|数量)|预训练数据|training data|dataset size|图文对",
+        "training dataset million hours pairs examples",
+        r"\b(?:million|billion|hours|pairs|examples)\b",
+    ),
+    (
+        r"输入|输出|\binputs?\b|\boutputs?\b",
+        "inputs outputs",
+        r"\binputs?\b.{0,500}\boutputs?\b|\boutputs?\b.{0,500}\binputs?\b",
+    ),
     (r"初始化|initiali[sz]", "initialization", r"initiali[sz]"),
     (r"合并|merge", "merge weights", r"merge|W\s*=|absorb"),
     (
@@ -31,8 +41,47 @@ def concept_evidence(question, identifiers, maximum=4):
         candidates = store.search(
             query,
             identifiers,
-            limit=60 if query == "exact approximate attention" else 12,
+            limit=60
+            if query
+            in {
+                "exact approximate attention",
+                "training dataset million hours pairs examples",
+            }
+            else 12,
         )
+        if query == "training dataset million hours pairs examples":
+            # Prefer passages covering the explicitly named datasets/model names.
+            # Units and counts still come from source text, never from this rule.
+            entities = set(re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", question.lower()))
+            candidates.sort(
+                key=lambda b: (
+                    -sum(
+                        bool(
+                            re.search(
+                                r"\b" + re.escape(term) + r"\b",
+                                b["text"],
+                                re.IGNORECASE,
+                            )
+                        )
+                        for term in entities
+                    ),
+                    b.get("page", 0),
+                )
+            )
+        if query == "inputs outputs":
+            # Capability definitions must compete with long prompt/response examples.
+            # This selects source prose, never substitutes a model name or an answer.
+            candidates.sort(
+                key=lambda b: (
+                    not bool(
+                        re.search(
+                            r"\b(?:accept|process|take)\w*\b.{0,180}\binputs?\b.{0,120}\b(?:produc|generat|return)\w*\b.{0,80}\boutputs?\b",
+                            store.quote_normalize(b["text"]),
+                            re.IGNORECASE,
+                        )
+                    )
+                )
+            )
         if query == "exact approximate attention":
             # A definition is a better first anchor for a method-category question
             # than a timing paragraph comparing many method categories.

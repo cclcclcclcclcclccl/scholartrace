@@ -1,14 +1,18 @@
 import { spawn } from 'node:child_process';
-import { existsSync, openSync, closeSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, closeSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { root, logs, python, delay, portOpen, ownedProcess } from './runtime.mjs';
 
 mkdirSync(logs, { recursive: true });
+const selectionPath = path.join(root, 'config/model-runtime.json');
+const selection = existsSync(selectionPath) ? JSON.parse(readFileSync(selectionPath, 'utf8')) : {};
+const modelFile = selection.model_file || 'models/Qwen3-4B-Q4_K_M.gguf';
+if (!['models/Qwen3-4B-Q4_K_M.gguf', 'models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf'].includes(modelFile)) throw Error('Unsupported local model selection');
 if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.env'));
 writeFileSync(path.join(logs, 'supervisor.process.json'), JSON.stringify({ pid: process.pid, executable: process.execPath, startedAt: Date.now() }));
 const services = [
   { name: 'server', port: 8765, executable: python, args: ['-X', 'utf8', '-m', 'uvicorn', 'backend.app:app', '--host', '127.0.0.1', '--port', '8765'] },
-  { name: 'model', port: 8081, executable: path.join(root, 'tools/llama/llama-server.exe'), args: ['-m', path.join(root, 'models/Qwen3-4B-Q4_K_M.gguf'), '--host', '127.0.0.1', '--port', '8081', '-ngl', '99', '-c', '8192', '-b', '512', '-ub', '128', '-np', '1', '-t', '8', '--jinja'] },
+  { name: 'model', port: 8081, executable: path.join(root, 'tools/llama/llama-server.exe'), args: ['-m', path.join(root, modelFile), '--host', '127.0.0.1', '--port', '8081', '-ngl', '99', '-c', '8192', '-b', '512', '-ub', '128', '-np', '1', '-t', '8', '--jinja'] },
 ].map(item => ({ ...item, child: null, failures: 0, nextAttempt: 0, started: 0 }));
 const log = message => console.log(new Date().toISOString() + ' ' + message);
 let stopping = false;
@@ -17,6 +21,11 @@ process.on('SIGINT', () => { stopping = true; });
 log('Independent supervisor started');
 while (!stopping && !existsSync(path.join(logs, 'stop.request'))) {
   for (const service of services) {
+    // Explicit local maintenance marker releases only the model, keeping the web service alive.
+    if (service.name === 'model' && existsSync(path.join(logs, 'model.pause'))) {
+      if (service.child) ownedProcess('model', true);
+      continue;
+    }
     if (service.child || Date.now() < service.nextAttempt || !existsSync(service.executable)) continue;
     if (service.name === 'model' && !existsSync(service.args[1])) continue;
     // Loading models return HTTP 503 but already own their listening port.

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import mimetypes
 import os
-import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlparse
 
 import httpx
@@ -17,18 +16,24 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (
-    audit,
-    store,
-    database,
-    jobs,
-    retrieval,
-    discovery,
     accounts,
-    features,
-    research,
-    workspace_tools,
+    audit,
+    boundaries,
+    database,
+    discovery,
     experiments,
-    proposal_revision,
+    features,
+    jobs,
+    model,
+    projects,
+    recall,
+    rehearsal,
+    proposal_revision,  # noqa: F401 -- registers the refine_plan handler
+    research,
+    research_tasks,
+    retrieval,
+    store,
+    workspace_tools,
 )
 from .review import review_change
 
@@ -71,6 +76,11 @@ app.include_router(accounts.router)
 app.include_router(features.router)
 app.include_router(workspace_tools.router)
 app.include_router(experiments.router)
+app.include_router(projects.router)
+app.include_router(recall.router)
+app.include_router(rehearsal.router)
+app.include_router(boundaries.router)
+app.include_router(research_tasks.router)
 
 
 @app.exception_handler(KeyError)
@@ -182,7 +192,7 @@ async def upload(file: UploadFile):
             path.unlink(missing_ok=True)
         else:
             record = store.get_document(result["id"])
-            if record["status"] == "needs_ocr":
+            if record["metadata"].get("pages_without_text"):
                 jobs.submit("ocr", {"document_id": result["id"]})
             else:
                 jobs.submit("index", {"document_ids": [result["id"]]})
@@ -191,7 +201,7 @@ async def upload(file: UploadFile):
     except HTTPException:
         path.unlink(missing_ok=True)
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 -- cleanup upload and return a public parse error
         path.unlink(missing_ok=True)
         raise HTTPException(422, "PDF 解析失败，文件可能损坏或加密") from None
     finally:
@@ -201,6 +211,9 @@ async def upload(file: UploadFile):
 class Query(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     document_ids: list[str] = Field(default_factory=list, max_length=40)
+    project_id: str | None = Field(default=None, min_length=1, max_length=64)
+    source_block_id: str | None = Field(default=None, min_length=1, max_length=128)
+    source_quote: str | None = Field(default=None, min_length=12, max_length=4000)
 
 
 @app.post("/api/search")
@@ -220,8 +233,20 @@ def search(query: Query):
 async def ask(query: Query):
     for identifier in query.document_ids:
         document(identifier)
+    project = (
+        projects.validate_scope(query.project_id, query.document_ids)
+        if query.project_id
+        else None
+    )
+    from . import source_followup
+
+    block = None
+    if query.source_block_id is not None or query.source_quote is not None:
+        block = source_followup.selected_block(query.document_ids, query.source_block_id, query.source_quote)
+    project_token = projects.current.set(project)
     try:
-        result = await research.grounded(query.question, query.document_ids)
+        result = (await source_followup.answer(query.question, block) if block is not None
+                  else await research.grounded(query.question, query.document_ids))
         claims = result["claims"]
         saved = (
             research.save_artifact(
@@ -244,11 +269,20 @@ async def ask(query: Query):
             if claims
             else "当前检索证据不足以给出可核验的回答；以下原文供复核，不代表问题的答案。",
             "limitations": result.get("limitations", ""),
+            "answer_checklist": result.get("answer_checklist"),
+            "source_scope": result.get("source_scope"),
             "comparison": result.get("comparison", []),
             "subquestions": result.get("subquestions", []),
             "artifact_id": saved["id"] if saved else None,
         }
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        if block is not None:
+            return {
+                "evidence": [block], "mode": "evidence_only", "model_answer": None,
+                "source_scope": source_followup.scope(block),
+                "limitations": source_followup.NOTICE,
+                "message": "本次选段生成未完成，保留选中原文；可以重试，没有扩大检索范围。",
+            }
         result = await asyncio.to_thread(search, query)
         result.update(
             mode="evidence_only",
@@ -256,6 +290,8 @@ async def ask(query: Query):
             message="本地生成服务未就绪或输出未通过检查；当前展示原文检索结果。",
         )
         return result
+    finally:
+        projects.current.reset(project_token)
 
 
 class Pair(BaseModel):
@@ -290,17 +326,40 @@ def save_note(note: Note):
 
 class AuditTarget(BaseModel):
     target_document_id: str
+    note_ids: list[Annotated[int, Field(gt=0)]] | None = Field(
+        default=None, min_length=1, max_length=12
+    )
 
 
 @app.post("/api/versions/audit")
 async def audit_version(target: AuditTarget):
     document(target.target_document_id)
     result = await asyncio.to_thread(audit.audit_against, target.target_document_id)
-    async with httpx.AsyncClient(timeout=45, trust_env=False) as client:
-        for item in result["results"][:12]:
-            item["semantic_review"] = await review_change(
-                item, client, MODEL_URL, MODEL_NAME
+    rows = result["results"]
+    if target.note_ids is not None:
+        valid = {item["note"]["id"] for item in rows}
+        if not set(target.note_ids).issubset(valid):
+            raise HTTPException(
+                422, "所选笔记不在这个版本的复核范围内，请重新检查证据变化"
             )
+        selected = [item for item in rows if item["note"]["id"] in target.note_ids]
+    else:
+        selected = rows[:12]
+    for item in rows:
+        item["semantic_review"] = {
+            "status": "not_checked",
+            "reason": "尚未完成含义复核；每批最多 12 条且总等待不超过 180 秒，可继续复核未检查项。",
+        }
+    try:
+        async with asyncio.timeout(180):
+            async with httpx.AsyncClient(timeout=45, trust_env=False) as client:
+                for item in selected:
+                    async with model.gate:
+                        item["semantic_review"] = await review_change(
+                            item, client, MODEL_URL, MODEL_NAME
+                        )
+    except TimeoutError:
+        result["time_budget_exhausted"] = True
     result["semantic_review_limit"] = 12
     return result
 

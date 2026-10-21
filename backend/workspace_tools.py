@@ -5,7 +5,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import charts, database, jobs, model, research, store
 
@@ -87,6 +87,69 @@ class LibraryOrganization(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=20)
     collection: str = Field(default="", max_length=100)
     reading_status: Literal["unread", "reading", "read", "reproduce"] = "unread"
+
+
+class OrganizationChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=100)
+    expected: LibraryOrganization
+    value: LibraryOrganization
+
+
+class OrganizationBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[OrganizationChange] = Field(min_length=1, max_length=500)
+
+
+def organization_value(metadata: dict) -> dict:
+    return {
+        "tags": metadata.get("tags", []),
+        "collection": metadata.get("collection", ""),
+        "reading_status": metadata.get("reading_status", "unread"),
+    }
+
+
+@router.patch("/library/organization/batch")
+def organize_batch(body: OrganizationBatch):
+    """Compare and update an account-local selection in one transaction, including undo."""
+    identifiers = [item.id for item in body.items]
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("批量操作不能包含重复文献")
+    changes = []
+    with store.connection() as c:
+        c.execute("BEGIN IMMEDIATE")
+        for item in body.items:
+            row = c.execute(
+                "SELECT metadata, archived FROM documents WHERE id=?", (item.id,)
+            ).fetchone()
+            if row is None:
+                raise HTTPException(
+                    404, "部分文献已不可访问，请刷新文献库；本次未修改任何文献"
+                )
+            if row["archived"]:
+                raise HTTPException(
+                    409, "部分文献已归档，请刷新文献库；本次未修改任何文献"
+                )
+            metadata = json.loads(row["metadata"])
+            previous = organization_value(metadata)
+            if previous != item.expected.model_dump():
+                raise HTTPException(
+                    409, "文献分类已在其他操作中更新，请刷新后重试；本次未修改任何文献"
+                )
+            value = item.value.model_dump()
+            value["collection"] = value["collection"].strip()
+            value["tags"] = list(
+                dict.fromkeys(t.strip() for t in value["tags"] if t.strip())
+            )
+            if any(len(t) > 40 for t in value["tags"]):
+                raise ValueError("每个标签最多 40 字")
+            metadata.update(value)
+            c.execute(
+                "UPDATE documents SET metadata=? WHERE id=?",
+                (json.dumps(metadata, ensure_ascii=False), item.id),
+            )
+            changes.append({"id": item.id, "previous": previous, "value": value})
+    return {"updated": len(changes), "changes": changes}
 
 
 @router.patch("/documents/{identifier}/organization")

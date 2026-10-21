@@ -1,0 +1,53 @@
+import { createRequire } from 'node:module';
+import { readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import assert from 'node:assert/strict';
+const { chromium } = createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder = process.env.SCHOLARTRACE_UI_OUTPUT;
+assert(folder, 'Set an evidence output folder');
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+const report = { checks: [], errors: [] };
+page.on('pageerror', e => report.errors.push(String(e)));
+try {
+  await page.goto(pathToFileURL(resolve('evaluation/reliability/report.html')).href);
+  const total = await page.locator('.case').count();
+  assert(total >= 432);
+  report.records = total;
+  await page.getByLabel('选择运行批次').selectOption('v12-transfer');
+  assert.equal(await page.locator('.case:visible').count(), 6);
+  await page.getByLabel('仅看失败与不完整').check();
+  await page.getByLabel('搜索案例').fill('transfer_flash_variants');
+  assert.equal(await page.locator('.case:visible').count(), 1);
+  await page.getByRole('button', { name: '展开当前结果' }).click();
+  assert((await page.locator('.case:visible').innerText()).includes('调用错误'));
+  report.checks.push('Rejected round, failed case filter, full quotes and actual call error remain accessible');
+  await page.screenshot({ path: `${folder}/quality-dashboard-desktop.png` });
+  await page.getByLabel('选择运行批次').selectOption('v18-old');
+  await page.getByLabel('搜索案例').fill('whisper_segments');
+  assert.equal(await page.locator('.case:visible').count(), 1);
+  await page.getByRole('button', { name: '展开当前结果' }).click();
+  assert((await page.locator('.case:visible').innerText()).includes('批次已中断'));
+  assert((await page.locator('.case:visible').innerText()).includes('支持句错配'));
+  report.checks.push('Aborted candidate remains visible and explicitly excluded from complete-round scores');
+  await page.getByLabel('搜索案例').fill('');
+  await page.getByLabel('仅看失败与不完整').uncheck();
+  await page.getByLabel('选择运行批次').selectOption('all');
+  assert.equal(await page.locator('.case:visible').count(), total);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: `${folder}/quality-dashboard-mobile.png` });
+  report.checks.push('All records recover after filtering; 390px viewport has no whole-page horizontal overflow');
+  const humanLink = await page.locator('a').filter({ hasText: '进入真人计时试验工具' }).getAttribute('href');
+  assert((await readFile(resolve('evaluation/reliability', humanLink), 'utf8')).includes('<html'));
+  report.checks.push('Standalone human-study link resolves to an existing HTML artifact');
+  assert.deepEqual(report.errors, []);
+} catch (e) {
+  report.failure = String(e);
+  throw e;
+} finally {
+  await writeFile(`${folder}/dashboard-browser.json`, JSON.stringify(report, null, 2));
+  await browser.close();
+  console.log(JSON.stringify(report));
+}

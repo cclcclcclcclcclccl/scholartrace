@@ -1,0 +1,173 @@
+.boundaries-panel {
+  margin: 24px 0;
+  padding: 24px;
+  border: 1px solid #c7dcd5;
+  border-radius: 18px;
+  background: #f2f7f4;
+  color: #203b35;
+}
+.boundaries-panel h2 {
+  font-size: 22px;
+  margin: 8px 0;
+}
+.boundaries-panel p {
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.boundaries-panel button:not(.primary-button) {
+  border: 1px solid #b8cec4;
+  background: white;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #245346;
+  cursor: pointer;
+}
+.boundaries-panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.boundaries-panel :focus-visible {
+  outline: 3px solid #729a8a;
+  outline-offset: 3px;
+}
+.boundaries-builder,
+.boundaries-history,
+.boundaries-editor {
+  padding: 16px;
+  background: white;
+  border: 1px solid #c7dcd5;
+  border-radius: 12px;
+  margin: 16px 0;
+}
+.boundaries-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.boundaries-builder > label,
+.boundaries-editor > label {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+.boundaries-panel input:not([type="checkbox"]),
+.boundaries-panel select,
+.boundaries-panel textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #b8cec4;
+  border-radius: 8px;
+  font: inherit;
+  background: #fff;
+  color: #203b35;
+}
+.boundaries-panel textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+.boundaries-notes {
+  display: grid;
+  gap: 12px;
+  max-height: 240px;
+  overflow: auto;
+  margin: 14px 0;
+}
+.boundaries-notes label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.boundaries-panel small {
+  display: block;
+  color: #566b62;
+  line-height: 1.7;
+}
+.boundaries-notice {
+  background: #e5efe8;
+  padding: 12px;
+  border-radius: 8px;
+}
+.boundaries-scroll {
+  overflow: auto;
+  max-width: 100%;
+  border: 1px solid #c7dcd5;
+  border-radius: 10px;
+  background: white;
+}
+.boundaries-scroll table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 640px;
+  table-layout: fixed;
+}
+.boundaries-scroll th,
+.boundaries-scroll td {
+  padding: 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #d9e4df;
+  border-right: 1px solid #d9e4df;
+  overflow-wrap: anywhere;
+}
+.boundaries-scroll th:first-child {
+  width: 120px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #f1f6f3;
+  box-shadow: 1px 0 #c7dcd5;
+}
+.boundaries-scroll thead {
+  background: #e7efe9;
+}
+.boundaries-scroll td > button {
+  margin-top: 12px;
+}
+.boundaries-scroll p {
+  margin-top: 0;
+  white-space: pre-wrap;
+}
+.boundaries-panel blockquote {
+  margin: 12px 0;
+  padding: 12px;
+  border-left: 3px solid #729a8a;
+  background: #f1f6f3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  line-height: 1.8;
+}
+.boundaries-conflict {
+  background: #fff4d9;
+  padding: 14px;
+  margin-top: 14px;
+}
+.boundaries-conflict pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .boundaries-scroll th:first-child {
+    width: 92px;
+    box-sizing: border-box;
+    padding: 10px;
+    font-size: 14px;
+  }
+  .boundaries-panel {
+    padding: 16px;
+  }
+  .boundaries-panel h2 {
+    font-size: 19px;
+  }
+  .boundaries-scroll table {
+    min-width: 0;
+  }
+  .boundaries-scroll table[data-papers="2"] {
+    width: calc(200% - 92px);
+  }
+  .boundaries-scroll table[data-papers="3"] {
+    width: calc(300% - 184px);
+  }
+}

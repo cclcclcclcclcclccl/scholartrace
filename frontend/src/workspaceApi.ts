@@ -19,6 +19,7 @@ export type Anchor = {
   text?: string;
 };
 export type Job = {
+  history_cursor?: number;
   id: string;
   kind: string;
   state: string;
@@ -33,17 +34,30 @@ export async function request<T>(
   url: string,
   body?: unknown,
   method = "POST",
+  timeoutMs = 300000,
 ): Promise<T> {
-  const response = await fetch(
-    url,
-    body === undefined
-      ? {}
-      : {
-          method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
-  );
+  let response: Response;
+  try {
+    response = await fetch(
+      url,
+      body === undefined
+        ? { signal: AbortSignal.timeout(timeoutMs) }
+        : {
+            signal: AbortSignal.timeout(timeoutMs),
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+    );
+  } catch (e) {
+    if ((e as Error).name === "TimeoutError")
+      throw new Error(
+        "请求等待超时。后台任务可能仍在执行，请到任务中心查看状态后再决定是否重试。",
+      );
+    if (e instanceof TypeError)
+      throw new Error("连接服务失败，请检查本地服务和网络。已有记录仍保留。");
+    throw e;
+  }
   if (!response.ok) {
     const value = await response.json().catch(() => ({}));
     throw new Error(

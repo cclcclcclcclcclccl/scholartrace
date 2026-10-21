@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { readFile, writeFile } from 'node:fs/promises';
+const { chromium } = createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder = 'artifacts/parsing-quality-20261020';
+const base = 'http://127.0.0.1:8767';
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const report = { checks: [], errors: [] };
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+  page.on('pageerror', e => report.errors.push(String(e)));
+  await page.goto(base);
+  await page.getByRole('dialog').waitFor();
+  await page.keyboard.press('Escape');
+  const fixture = await readFile(`${folder}/mixed-ocr-fixture.pdf`);
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'Browser mixed OCR verification.pdf', mimeType: 'application/pdf', buffer: Buffer.concat([fixture, Buffer.from('\n% browser-upload-coverage\n')]) });
+  await page.getByText('文献已导入', { exact: true }).waitFor({ timeout: 30000 });
+  const papers = await (await page.request.get(`${base}/api/documents`)).json();
+  const document = papers.find(p => p.name === 'Browser mixed OCR verification.pdf');
+  assert.ok(document);
+  let quality;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    quality = await (await page.request.get(`${base}/api/documents/${document.id}/text-quality`)).json();
+    if (quality.pages[1].ocr_chars > 0 && quality.pages[2].state === 'unrecognized') break;
+    await page.waitForTimeout(1000);
+  }
+  assert.equal(quality.text_pages, 2);
+  assert.deepEqual(quality.retry_pages, [3]);
+  report.checks.push('Browser upload automatically OCRs mixed PDF and records the blank page without task failure');
+  await page.getByRole('button', { name: '文献管理', exact: true }).click();
+  await page.getByLabel('搜索文献库', { exact: true }).fill('Browser mixed OCR verification');
+  await page.locator(`tr[data-document-id="${document.id}"]`).getByRole('button', { name: /^管理 / }).click();
+  const panel = page.getByRole('region', { name: '逐页文字覆盖检查' });
+  await panel.getByText('有文字 2 / 3 页 · 需核对 1 页', { exact: true }).waitFor();
+  assert.equal(await panel.locator('.quality-page').count(), 1);
+  await panel.getByText(/第 3 页 · 未识别到文字/).waitFor();
+  await panel.getByLabel('显示全部页面').check();
+  assert.equal(await panel.locator('.quality-page').count(), 3);
+  report.checks.push('Coverage defaults to problem pages; all-page view separates native, OCR and unrecognized pages');
+  await panel.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${folder}/quality-desktop.png`, fullPage: true });
+  const download = page.waitForEvent('download');
+  await panel.getByRole('button', { name: '导出文字检查' }).click();
+  const exported = await download;
+  await exported.saveAs(`${folder}/browser-export.json`);
+  assert.deepEqual(JSON.parse(await readFile(`${folder}/browser-export.json`, 'utf8')), quality);
+  report.checks.push('Downloaded report matches actual API page data');
+  await panel.getByText('如何使用文字检查', { exact: true }).click();
+  await panel.getByText(/先查看需核对的页/).waitFor();
+  await panel.getByRole('button', { name: '刷新文字检查' }).click();
+  await panel.getByText('有文字 2 / 3 页 · 需核对 1 页', { exact: true }).waitFor();
+  report.checks.push('Contextual tutorial and refresh work');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: `${folder}/quality-mobile.png`, fullPage: true });
+  report.checks.push('390px viewport has no whole-page horizontal overflow');
+  await panel.getByRole('button', { name: '查看第 3 页原图' }).click();
+  const jump = page.getByRole('spinbutton', { name: '当前页码' });
+  await jump.waitFor();
+  assert.equal(await jump.inputValue(), '3');
+  await page.waitForFunction(() => document.querySelector('canvas')?.width > 0 && !document.body.innerText.includes('正在呈现原文'));
+  report.checks.push('Problem-page button opens the original PDF at page 3');
+  assert.deepEqual(report.errors, []);
+  report.document_id = document.id;
+  report.quality = quality;
+} catch (error) {
+  report.failure = String(error.stack || error);
+  process.exitCode = 1;
+} finally {
+  await writeFile(`${folder}/browser.json`, JSON.stringify(report, null, 2));
+  await browser.close();
+}
+console.log(JSON.stringify(report, null, 2));

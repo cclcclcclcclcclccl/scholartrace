@@ -4,7 +4,8 @@ import asyncio
 import json
 import traceback
 import uuid
-from . import store
+
+from . import projects, store
 
 handlers = {}
 workers = set()
@@ -50,6 +51,34 @@ def listing():
         ]
 
 
+def history_page(kind=None, before=0, limit=50):
+    with store.connection() as conn:
+        rows = list(
+            conn.execute(
+                "SELECT rowid AS history_cursor,* FROM jobs WHERE (? IS NULL OR kind=?) AND (?=0 OR rowid<?) ORDER BY rowid DESC LIMIT ?",
+                (kind, kind, before, before, limit + 1),
+            )
+        )
+    items = [decode(r) for r in rows[:limit]]
+    return {
+        "items": items,
+        "next_before": items[-1]["history_cursor"] if len(rows) > limit else None,
+    }
+
+
+def matching_active(kind, payload):
+    with store.connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE kind=? AND cancel_requested=0 AND state IN ('queued','running','interrupted')",
+            (kind,),
+        )
+        for row in rows:
+            job = decode(row)
+            if job["payload"] == payload:
+                return job
+    return None
+
+
 def event(identifier, kind, message, data=None):
     with store.connection() as conn:
         conn.execute(
@@ -93,6 +122,7 @@ async def run(identifier):
     if identifier in active:
         return
     active.add(identifier)
+    project_token = projects.current.set(None)
     try:
         async with gate:
             job = get(identifier)
@@ -106,6 +136,16 @@ async def run(identifier):
                     (identifier,),
                 )
             event(identifier, "start", "开始执行 " + job["kind"])
+            if job["payload"].get("project_id"):
+                project = projects.context(job["payload"]["project_id"], active=False)
+                project["source_document_ids"] = job["payload"].get(
+                    "document_ids", []
+                ) + (
+                    [job["payload"]["document_id"]]
+                    if job["payload"].get("document_id")
+                    else []
+                )
+                projects.current.set(project)
             result = await handlers[job["kind"]](ctx, job["payload"])
             ctx.check()
             with store.connection() as conn:
@@ -127,7 +167,7 @@ async def run(identifier):
             )
         if isinstance(exc, asyncio.CancelledError):
             raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- persist failed background task for recovery
         message = str(exc)[:1500] or type(exc).__name__
         with store.connection() as conn:
             conn.execute(
@@ -137,6 +177,7 @@ async def run(identifier):
         event(identifier, "error", message)
         traceback.print_exc()
     finally:
+        projects.current.reset(project_token)
         active.discard(identifier)
 
 

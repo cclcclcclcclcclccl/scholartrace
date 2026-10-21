@@ -13,4 +13,7 @@ tools/
 artifacts/
 *.log
 *.tsbuildinfo
+output/
+data-container/
+.ruff_cache/
 

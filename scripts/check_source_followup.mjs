@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile,writeFile} from 'node:fs/promises';
+const {chromium}=createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder='artifacts/source-followup-20261021',base='http://127.0.0.1:8767';
+const fixture=JSON.parse(await readFile(`${folder}/workflow/fixture.json`,'utf8'));
+const spec=JSON.parse(await readFile(`${folder}/protocol.json`,'utf8'));
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const report={notice:'Real-paper developer browser checks; not human-user validation.',checks:[],errors:[],responses:[],requests:[],complete:false};
+try {
+  const page=await browser.newPage({viewport:{width:390,height:844}});page.setDefaultTimeout(20000);
+  page.on('pageerror',e=>report.errors.push(String(e)));
+  page.on('request',r=>{if(r.url().endsWith('/api/ask'))report.requests.push(r.postDataJSON());});
+  await page.goto(base);await page.getByRole('dialog').waitFor();await page.keyboard.press('Escape');
+  await page.getByLabel('选择阅读文献').selectOption(fixture.papers[1].id);
+  async function ask(question) {
+    await page.getByLabel('研究问题',{exact:true}).fill(question);
+    const pending=page.waitForResponse(r=>r.url().endsWith('/api/ask')&&r.request().method()==='POST',{timeout:180000});
+    await page.getByLabel('研究问题',{exact:true}).press('Enter');
+    const response=await pending;assert.equal(response.status(),200);const data=await response.json();report.responses.push(data);await page.locator('.evidence-card').first().waitFor();return data;
+  }
+  const initial=await ask('Post-LN Pre-LN expected gradients at initialization warm-up');
+  const focused=spec.cases.find(c=>c.id==='preln_focused');
+  const index=initial.evidence.findIndex(b=>b.id===focused.source_block_id);assert.ok(index>=0);
+  await page.locator('.evidence-card').nth(index).getByRole('button',{name:'只依据此段追问',exact:true}).click();
+  const pin=page.getByRole('region',{name:'限定原文补问',exact:true});await pin.waitFor();
+  await pin.getByText('核对本次选中的完整原文',{exact:true}).click();
+  assert.equal((await pin.locator('blockquote').textContent()).trim(),focused.source_quote.trim());
+  assert.equal(await page.getByRole('button',{name:'后台问答（可恢复）',exact:true}).count(),0);
+  report.checks.push('Selected block loads full current text and does not expose an unscoped background action');
+  const result=await ask(focused.question);
+  assert.deepEqual(result.evidence.map(b=>b.id),[focused.source_block_id]);
+  assert.ok(result.model_answer?.length);
+  assert.equal(result.source_scope.block_id,focused.source_block_id);
+  assert.equal(report.requests[1].source_quote,focused.source_quote);
+  assert.equal(report.requests[1].source_block_id,focused.source_block_id);
+  const exported=await(await page.request.get(`${base}/api/artifacts/${result.artifact_id}/export`)).text();
+  assert.ok(exported.includes('只依据你选中的这一段原文'));
+  await writeFile(`${folder}/browser-answer.md`,exported);
+  report.checks.push('Real targeted question uses exactly one selected block; saved export retains scope');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  await pin.screenshot({path:`${folder}/pin-mobile.png`});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({path:`${folder}/answer-desktop.png`,fullPage:true});
+  await pin.getByRole('button',{name:'解除限定，恢复当前论文检索'}).click();
+  assert.equal(await pin.count(),0);
+  await page.getByRole('button',{name:'后台问答（可恢复）',exact:true}).waitFor();
+  report.checks.push('Explicit release restores ordinary question actions');
+  await page.locator('.evidence-card').first().getByRole('button',{name:'只依据此段追问',exact:true}).click();await pin.waitFor();
+  await page.setViewportSize({width:390,height:844});
+  await page.getByLabel('选择阅读文献').selectOption(fixture.papers[0].id);
+  assert.equal(await pin.count(),0);
+  const ordinary=await ask('Layer normalization batch size 1 pure online regime');
+  assert.ok(ordinary.evidence.every(b=>b.document_id===fixture.papers[0].id));
+  assert.equal(report.requests[2].source_block_id,undefined);
+  assert.equal(report.requests[2].source_quote,undefined);
+  report.checks.push('Changing paper clears old source and real ordinary query stays in the new paper');
+  assert.deepEqual(report.errors,[]);report.complete=true;
+}catch(error){report.failure=String(error);throw error;}
+finally{await writeFile(`${folder}/browser.json`,JSON.stringify(report,null,2));await browser.close();console.log(JSON.stringify({complete:report.complete,checks:report.checks,errors:report.errors,failure:report.failure},null,2));}

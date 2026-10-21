@@ -1,0 +1,4 @@
+import {createRequire} from 'node:module';
+import {mkdir,writeFile} from 'node:fs/promises';
+const {chromium}=createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const b=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});const p=await b.newPage({viewport:{width:1920,height:1080}});await mkdir('artifacts/submission-20261018',{recursive:true});await p.goto('http://127.0.0.1:8766');await p.getByRole('dialog').waitFor();await p.screenshot({path:'artifacts/submission-20261018/tutorial.png'});await p.keyboard.press('Escape');await p.waitForTimeout(1500);await p.screenshot({path:'artifacts/submission-20261018/reader.png'});console.log(await p.getByRole('button').allTextContents());await b.close();

@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {ownedProcess,health} from './runtime.mjs';
+const {chromium}=createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder='artifacts/background-qa-2026-10-14';
+const base='http://127.0.0.1:8765';
+await mkdir(folder,{recursive:true});
+const starter=JSON.parse(await readFile('artifacts/project-workspace-2026-10-14/starter-project.json','utf8'));
+const question='模型训练用了哪些 GPU？论文有没有报告 base 模型随机种子 42 的那一次独立训练的 BLEU 分数？后者不能用汇总结果代替，缺证据也请保留第一项的回答。';
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:1000},acceptDownloads:true});
+const report={checks:[],errors:[]};
+page.on('pageerror',e=>report.errors.push(String(e)));
+async function until(fn,timeout=180000){const start=Date.now();while(Date.now()-start<timeout){const value=await fn();if(value)return value;await new Promise(r=>setTimeout(r,350));}throw Error('Timed out waiting for persisted state');}
+let jobId;
+try{
+ await page.goto(`${base}/#project=${starter.id}`);
+ await page.getByRole('dialog').waitFor();await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'使用项目文献提问',exact:true}).click();
+ await page.getByLabel('研究问题',{exact:true}).fill(question);
+ const submission=page.waitForResponse(r=>r.url().endsWith('/api/jobs')&&r.request().method()==='POST');
+ const started=Date.now();await page.getByRole('button',{name:'后台问答（可恢复）',exact:true}).click();
+ const job=await (await submission).json();jobId=job.id;assert.ok(jobId);
+ report.submission_ms=Date.now()-started;report.job_id=jobId;
+ await writeFile(`${folder}/created-job.json`,JSON.stringify(job,null,2));
+ console.log('真实后台问答已提交：'+jobId);
+ const saved=await until(async()=>{const r=await (await page.request.get(`${base}/api/jobs/${jobId}/answer-parts`)).json();return r.length===1?r:null;});
+ await writeFile(`${folder}/first-checkpoint.json`,JSON.stringify(saved[0],null,2));
+ await page.getByRole('button',{name:'停止后台任务',exact:true}).click();
+ await until(async()=>{const r=await (await page.request.get(`${base}/api/jobs/${jobId}`)).json();return r.state==='cancelled'?r:null;});
+ const parts=await (await page.request.get(`${base}/api/jobs/${jobId}/answer-parts`)).json();
+ assert.equal(parts.length,1);assert.deepEqual(parts[0],saved[0]);
+ await page.locator('.background-answer-part').first().locator('summary').first().click();
+ await page.locator('.background-answers').screenshot({path:`${folder}/partial-stopped.png`});
+ report.checks.push('真实模型完成第一篇后停止，保留一篇完整检查点及部分结果');
+ await page.reload();
+ // A project deep link returns to project; explicitly reopen its reader.
+ await page.getByRole('button',{name:'使用项目文献提问',exact:true}).click();
+ await page.getByRole('button',{name:'查看后台问答',exact:true}).click();
+ await page.getByLabel('选择后台问答').selectOption(jobId);
+ await page.getByRole('button',{name:'恢复未完成论文',exact:true}).waitFor();
+ assert.equal(await page.locator('.background-answer-part').count(),1);
+ report.checks.push('刷新后从当前账号任务列表恢复停止任务和已完成篇，无需浏览器本地缓存');
+ await page.getByRole('button',{name:'恢复未完成论文',exact:true}).click();
+ await until(async()=>{const r=await (await page.request.get(`${base}/api/jobs/${jobId}`)).json();return r.state==='running'&&r.message.includes('第 2/2 篇')?r:null;});
+ console.log('已恢复第一篇，验证网页服务重启后的自动恢复');
+ assert.equal(ownedProcess('server',true),true);
+ await until(()=>health(),60000);
+ const done=await until(async()=>{try{const r=await (await page.request.get(`${base}/api/jobs/${jobId}`)).json();if(r.state==='failed')throw Error(r.error);return r.state==='completed'?r:null;}catch(e){if(String(e).includes('ECONN'))return null;throw e;}},240000);
+ await writeFile(`${folder}/completed-job.json`,JSON.stringify(done,null,2));
+ assert.ok(done.result.id);report.artifact_id=done.result.id;
+ const finalParts=await (await page.request.get(`${base}/api/jobs/${jobId}/answer-parts`)).json();
+ assert.equal(finalParts.length,2);assert.deepEqual(finalParts[0],saved[0]);
+ const final=await (await page.request.get(`${base}/api/artifacts/${done.result.id}`)).json();
+ assert.equal(final.content.project_context.id,starter.id);
+ assert.equal(final.content.sections.length,2);
+ for(const p of final.content.sections){assert.ok(p.claims.some(c=>c.text.includes('P100')));assert.equal(p.subquestions[1].status,'unresolved');}
+ report.checks.push('仅重启本项目网页服务后任务自动继续，第一篇检查点内容不变；最终两篇回答与项目关联保留');
+ await page.getByRole('button',{name:'打开完整回答与导出',exact:true}).click();
+ await page.locator('.background-answers .artifact-result').waitFor();
+ assert.equal(await page.locator('.background-answers .artifact-result .answer-coverage').count(),2);
+ const dl=page.waitForEvent('download');await page.locator('.background-answers').getByRole('link',{name:'下载 Markdown',exact:true}).click();
+ await (await dl).saveAs(`${folder}/answer-export.md`);
+ await page.locator('.background-answers').screenshot({path:`${folder}/complete-desktop.png`});
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.locator('.background-answer-status').screenshot({path:`${folder}/mobile-status.png`});
+ const project=await (await page.request.get(`${base}/api/projects/${starter.id}`)).json();
+ assert.ok(project.jobs.some(j=>j.id===jobId));assert.ok(project.artifacts.some(a=>a.id===done.result.id));
+ report.checks.push('完整回答可从阅读台打开导出，项目任务与成果可找回；390px手机无整页横向溢出');
+ assert.deepEqual(report.errors,[]);report.passed=true;
+}catch(e){report.failure=String(e);await page.screenshot({path:`${folder}/failure.png`,fullPage:true});throw e;}
+finally{await writeFile(`${folder}/browser-report.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));await browser.close();}

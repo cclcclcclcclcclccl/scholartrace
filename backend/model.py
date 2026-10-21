@@ -30,6 +30,17 @@ async def complete(
                 ],
                 "temperature": 0,
                 "max_tokens": max_tokens,
+                # Reserve output space instead of letting reasoning consume the
+                # entire completion. Fresh prompts avoid KV-cache-dependent logits.
+                **(
+                    {
+                        "reasoning_budget_tokens": min(512, max_tokens // 2),
+                        "cache_prompt": False,
+                        "seed": 0,
+                    }
+                    if reasoning
+                    else {}
+                ),
                 **(
                     {
                         "response_format": {

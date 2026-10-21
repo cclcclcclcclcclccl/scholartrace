@@ -208,7 +208,11 @@ def import_pdf(path: Path, name: str | None = None) -> dict:
             str(path.resolve()),
             len(doc),
             chars,
-            "needs_ocr" if len(blank_pages) == len(doc) else "text_ready",
+            "needs_ocr"
+            if len(blank_pages) == len(doc)
+            else "partial_ocr"
+            if blank_pages
+            else "text_ready",
             identifier.group(1) if identifier else None,
             int(identifier.group(2)) if identifier and identifier.group(2) else None,
             json.dumps(metadata, ensure_ascii=False),
@@ -320,9 +324,37 @@ def query_terms(question: str) -> list[str]:
     return list(dict.fromkeys(token for token in tokens if token not in stop))[:35]
 
 
+def numeric_literal(question: str) -> str | None:
+    value = normalize(question)
+    return value if re.fullmatch(r"[+-]?\d+(?:\.\d+)?%?", value) else None
+
+
+def search_number(value: str, document_ids: list[str] | None, limit: int) -> list[dict]:
+    # Literal numeric lookup: preserve signs/decimal spelling, never semantic neighbors.
+    pattern = re.compile(r"(?<![\w.+-])" + re.escape(value) + r"(?!\w|\.\d)")
+    query = "SELECT b.*,d.title,d.name,d.version,0.0 AS score FROM blocks b JOIN documents d ON d.id=b.document_id WHERE d.archived=0 AND b.text LIKE ?"
+    params: list = ["%" + value.replace("%", "\\%") + "%"]
+    query += " ESCAPE '\\'"
+    if document_ids:
+        query += " AND b.document_id IN (" + ",".join("?" for _ in document_ids) + ")"
+        params.extend(document_ids)
+    query += " ORDER BY b.document_id,b.page,b.ordinal"
+    result = []
+    with connection() as conn:
+        for row in conn.execute(query, params):
+            if pattern.search(normalize(row["text"])):
+                result.append(decode_block(row))
+                if len(result) >= limit:
+                    break
+    return result
+
+
 def search(
     question: str, document_ids: list[str] | None = None, limit: int = 8
 ) -> list[dict]:
+    number = numeric_literal(question)
+    if number is not None:
+        return search_number(number, document_ids, limit)
     terms = query_terms(question)
     if not terms:
         return []

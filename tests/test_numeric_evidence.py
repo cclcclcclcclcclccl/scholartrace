@@ -59,3 +59,49 @@ def test_a_real_quote_does_not_legitimize_fabricated_numbers():
         ]
     }
     assert valid_claims(value, blocks) == []
+
+
+@pytest.mark.parametrize(
+    "claim,quote",
+    [
+        ("2019年4月下载，过滤后约750GB", "April 2019 text, about 750 GB"),
+        ("2020 年 12 月", "December 2020"),
+        ("April 2019", "2019年4月"),
+    ],
+)
+def test_translated_year_month_requires_the_same_date(claim, quote):
+    assert not unsupported_numbers(claim, quote)
+
+
+@pytest.mark.parametrize(
+    "claim,quote",
+    [
+        ("2019年5月", "April 2019 with 5 samples"),
+        ("2018年4月", "April 2019 and May 2018"),
+        ("2019年13月", "2019 with 13 samples"),
+        ("2019年4月使用4个样本", "April 2019"),
+        ("2019年4月下载约751GB", "April 2019 about 750 GB"),
+        ("2019年4月", "2019 with 4 samples"),
+        ("2018年8月至2019年7月", "August 2018 to July 2019"),
+        ("2019年4月", "April 2019 or May 2020 for different variants"),
+    ],
+)
+def test_date_support_does_not_license_wrong_dates_or_measurements(claim, quote):
+    assert unsupported_numbers(claim, quote)
+
+
+def test_correct_translated_date_survives_claim_validation():
+    quote = "We downloaded text from April 2019, producing about 750 GB."
+    result = valid_claims(
+        {
+            "claims": [
+                {
+                    "text": "2019年4月下载，过滤后约750GB",
+                    "evidence_id": "E1",
+                    "quote": quote,
+                }
+            ]
+        },
+        [{"id": "b", "document_id": "doc", "text": quote, "page": 8}],
+    )
+    assert len(result) == 1

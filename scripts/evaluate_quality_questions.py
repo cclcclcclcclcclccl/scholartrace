@@ -79,6 +79,34 @@ with httpx.Client(
             checks["coverage:" + file] = all(
                 re.search(p, own, re.IGNORECASE) for p in patterns
             )
+        for file, patterns in case.get("per_file_forbidden_patterns", {}).items():
+            own = " ".join(
+                c["text"] for c in claims if c["document_id"] == papers[file]["id"]
+            )
+            checks["no_cross_attribution:" + file] = not any(
+                re.search(p, own, re.IGNORECASE) for p in patterns
+            )
+        if case.get("expected_parts"):
+            for file in case["files"]:
+                row = next(
+                    (
+                        r
+                        for r in answer.get("comparison", [])
+                        if r["document_id"] == papers[file]["id"]
+                    ),
+                    {},
+                )
+                parts = (
+                    row.get("subquestions", [])
+                    if len(case["files"]) > 1
+                    else answer.get("subquestions", [])
+                )
+                checks["original_parts:" + file] = len(parts) == case["expected_parts"]
+                for part_id in case.get("unresolved_parts", []):
+                    checks[f"unresolved:{file}:{part_id}"] = any(
+                        p["id"] == part_id and p["status"] == "unresolved"
+                        for p in parts
+                    )
         real_blocks = {
             b["id"]: b
             for file in case["files"]

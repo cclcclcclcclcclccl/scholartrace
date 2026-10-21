@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile, writeFile} from 'node:fs/promises';
+const {chromium} = createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder = 'artifacts/coverage-quality-20261020';
+const run = JSON.parse(await readFile(`${folder}/candidate4-diagnostic/run.json`, 'utf8'));
+const original = run.rows.find(row => row.case_id === 'ln_batch').response;
+const fixture = JSON.parse(await readFile(`${folder}/workflow/fixture.json`, 'utf8'));
+const browser = await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe', headless:true});
+const report = {notice:'Synthetic response-state browser checks only, using real source blocks. No model inference or human-user evidence.', checks:[], errors:[], complete:false};
+try {
+  const page = await browser.newPage({viewport:{width:1440,height:1000}});
+  page.on('pageerror', error => report.errors.push(String(error)));
+  const note = '另有 1 条候选未进入最终回答（可能未通过核验或被去重）。当前回答不代表问题已完整覆盖，请核对下方原文。';
+  const response = {...original, model_answer:original.model_answer.slice(0,1), subquestions:[], comparison:[], limitations:note};
+  await page.route('**/api/ask', route => route.fulfill({json:response}));
+  await page.goto('http://127.0.0.1:8767');
+  await page.getByRole('dialog').waitFor(); await page.keyboard.press('Escape');
+  await page.setViewportSize({width:390,height:844});
+  await page.getByLabel('选择阅读文献').selectOption(fixture.papers[0].id);
+  await page.setViewportSize({width:1440,height:1000});
+  await page.getByLabel('研究问题',{exact:true}).fill('界面状态检查：候选遗漏提示');
+  await page.getByLabel('研究问题',{exact:true}).press('Enter');
+  await page.getByText(note,{exact:true}).waitFor();
+  assert.equal(await page.locator('.claim-card').count(),1);
+  report.checks.push('Single-question nonempty answer keeps omission notice visible');
+  await page.screenshot({path:`${folder}/notice-desktop.png`, fullPage:true});
+  const chosen = original.evidence[1], selected = original.evidence[0];
+  assert.ok(chosen && selected && chosen.id !== selected.id);
+  response.subquestions = [{id:'synthetic-part',question:'界面状态检查：实际生成原文',status:'unresolved',claim_count:0,evidence_ids:[selected.id,chosen.id],selected_evidence_ids:[selected.id],generation_evidence_ids:[chosen.id]}];
+  await page.getByLabel('研究问题',{exact:true}).fill('界面状态检查：实际生成原文');
+  await page.getByLabel('研究问题',{exact:true}).press('Enter');
+  const source = page.getByRole('button',{name:`查看候选原文 1 · 第${chosen.page} 页`,exact:true});
+  await source.waitFor(); await source.click();
+  assert.equal(await page.getByRole('spinbutton').getAttribute('aria-valuenow'),String(chosen.page));
+  const normalize = text => text.replace(/\s+/g,' ').trim();
+  assert.ok(normalize(await page.locator('.evidence-card.focused').innerText()).includes(normalize(chosen.text)));
+  report.checks.push('Candidate button locates actual generation source instead of selector-only source');
+  await page.getByRole('button',{name:'单独追问此项',exact:true}).click();
+  assert.ok((await page.getByLabel('研究问题',{exact:true}).inputValue()).includes('实际生成原文'));
+  report.checks.push('Unresolved question can be prepared again without automatically sending');
+  await page.setViewportSize({width:390,height:844});
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1));
+  await page.screenshot({path:`${folder}/notice-mobile.png`, fullPage:true});
+  report.checks.push('Mobile page has no horizontal overflow');
+  assert.deepEqual(report.errors,[]); report.complete = true;
+} catch(error) {report.failure=String(error); throw error;}
+finally {await writeFile(`${folder}/notice-browser.json`,JSON.stringify(report,null,2));await browser.close();console.log(JSON.stringify(report,null,2));}

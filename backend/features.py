@@ -14,16 +14,21 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import (
-    agent,
+    agent,  # noqa: F401 -- registers agent tasks
     audit,
+    background_answers,
     charts,
-    database,
-    diagrams,
+    diagrams,  # noqa: F401 -- registers diagram tasks
     discovery,
+    discovery_history,
+    discovery_tools,
+    document_quality,
     formula,
     impact,
     jobs,
+    ocr_supplement,
     parsing,
+    projects,
     research,
     retrieval,
     store,
@@ -34,19 +39,31 @@ from . import (
 router = APIRouter(prefix="/api")
 
 
+@router.get("/documents/{identifier}/text-quality")
+def text_quality(identifier: str):
+    return document_quality.report(identifier)
+
+
 class NoteEdit(BaseModel):
     note: str | None = Field(default=None, min_length=1, max_length=1000)
     archived: bool | None = None
+    expected_note: str | None = Field(default=None, max_length=1000)
 
 
 @router.patch("/notes/{identifier}")
 def edit_note(identifier: int, body: NoteEdit):
     with store.connection() as c:
+        c.execute("BEGIN IMMEDIATE")
         previous = c.execute(
             "SELECT * FROM evidence_notes WHERE id=?", (identifier,)
         ).fetchone()
         if not previous:
             raise KeyError(identifier)
+        if body.expected_note is not None and previous["note"] != body.expected_note:
+            raise HTTPException(
+                409,
+                "这条笔记已在其他页面更新。你的草稿仍保留，请先查看最新笔记，再决定如何合并。",
+            )
         if body.note is not None:
             if not body.note.strip():
                 raise ValueError("笔记不能为空")
@@ -104,14 +121,18 @@ class TaskPayload(BaseModel):
     language: Literal["zh", "en"] = "zh"
     page: int | None = Field(default=None, ge=1)
     artifact_id: str | None = None
+    impact_from: str | None = None
     paper_id: str | None = None
     tracker_id: str | None = None
     bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
     fields: list[str] = Field(default_factory=list, max_length=6)
+    project_id: str | None = Field(default=None, min_length=1, max_length=64)
+    question: str = Field(default="", max_length=2000)
 
 
 class TaskRequest(BaseModel):
     kind: Literal[
+        "ask",
         "parse",
         "ocr",
         "index",
@@ -135,12 +156,39 @@ class TaskRequest(BaseModel):
 @router.post("/jobs")
 async def create_job(body: TaskRequest):
     payload = body.payload.model_dump(exclude_none=True)
-    if body.kind == "refine_plan":
+    if body.kind == "ask":
+        payload["document_ids"] = list(dict.fromkeys(payload["document_ids"]))
         if (
-            not payload.get("artifact_id")
-            or research.artifact(payload["artifact_id"])["kind"] != "writing"
+            not payload["question"].strip()
+            or not 1 <= len(payload["document_ids"]) <= 8
         ):
-            raise ValueError("请选择一份研究方案")
+            raise ValueError("后台问答需要填写问题并明确选择 1—8 篇文献")
+        for identifier in payload["document_ids"]:
+            if store.get_document(identifier).get("archived"):
+                raise ValueError("不能对已归档文献启动新的后台问答")
+    if payload.get("project_id"):
+        projects.validate_scope(
+            payload["project_id"],
+            payload["document_ids"]
+            + ([payload["document_id"]] if payload.get("document_id") else []),
+            require_sources=body.kind
+            in {"ask", "review", "writing", "matrix", "agent"},
+        )
+    if payload.get("impact_from"):
+        if body.kind != "impact":
+            raise ValueError("仅成果版本复核支持继续批次")
+        previous = research.artifact(payload["impact_from"])
+        if previous["kind"] != "impact" or previous["content"].get("target", {}).get(
+            "id"
+        ) != payload.get("document_id"):
+            raise ValueError("请从同一目标版本的成果复核报告继续")
+        if not previous["content"].get("pending_dependencies"):
+            raise ValueError("该报告已没有未检查依赖")
+    if body.kind == "refine_plan" and (
+        not payload.get("artifact_id")
+        or research.artifact(payload["artifact_id"])["kind"] != "writing"
+    ):
+        raise ValueError("请选择一份研究方案")
     if body.kind == "matrix" and (
         not 1 <= len(payload["document_ids"]) <= 6
         or not payload["fields"]
@@ -167,6 +215,10 @@ async def create_job(body: TaskRequest):
             payload.get("page", 1),
             payload.get("bbox", []),
         )
+    if body.kind == "ocr":
+        ocr_supplement.selected_pages(
+            store.get_document(payload["document_id"]), payload.get("page")
+        )
     if body.kind == "table":
         tables.area_for(
             store.get_document(payload["document_id"]),
@@ -181,14 +233,10 @@ async def create_job(body: TaskRequest):
         [payload["document_id"]] if payload.get("document_id") else []
     ):
         store.get_document(identifier)
-    # Repeated clicks reuse an identical in-flight task.
-    for job in jobs.listing():
-        if (
-            job["kind"] == body.kind
-            and job["payload"] == payload
-            and job["state"] in {"queued", "running", "interrupted"}
-        ):
-            return job
+    # Check all active jobs, independently of the recent-history display limit.
+    existing = jobs.matching_active(body.kind, payload)
+    if existing:
+        return existing
     return jobs.submit(body.kind, payload)
 
 
@@ -197,9 +245,22 @@ def tasks():
     return jobs.listing()
 
 
+@router.get("/jobs-page")
+def task_history(
+    kind: str | None = Query(default=None, max_length=40),
+    before: int = Query(default=0, ge=0),
+):
+    return jobs.history_page(kind, before)
+
+
 @router.get("/jobs/{identifier}")
 def task(identifier: str):
     return jobs.get(identifier)
+
+
+@router.get("/jobs/{identifier}/answer-parts")
+def answer_parts(identifier: str):
+    return background_answers.checkpoints(identifier)
 
 
 @router.post("/jobs/{identifier}/cancel")
@@ -525,6 +586,7 @@ def translation_export(
 
 
 class SearchPapers(BaseModel):
+    mode: Literal["topic", "title", "identifier"] = "topic"
     query: str = Field(min_length=1, max_length=500)
     source: Literal["arxiv", "crossref"] = "arxiv"
     latest: bool = False
@@ -538,12 +600,43 @@ class SearchPapers(BaseModel):
 async def discover(body: SearchPapers):
     if body.year_from and body.year_to and body.year_from > body.year_to:
         raise ValueError("起始年份不能晚于结束年份")
-    return await discovery.search_cached(**body.model_dump())
+    result = await discovery_tools.lookup(**body.model_dump())
+    discovery_history.save("search", body.query, body.model_dump(), result)
+    return result
+
+
+class RelatedPapers(BaseModel):
+    force: bool = False
+    document_id: str | None = Field(default=None, max_length=100)
+    paper_id: str | None = Field(default=None, max_length=500)
+    online: bool = False
+    source: Literal["arxiv", "crossref"] = "crossref"
+
+
+@router.post("/discover/related")
+async def related_papers(body: RelatedPapers):
+    result = await discovery_tools.related(**body.model_dump())
+    discovery_history.save(
+        "related", result["seed"]["title"], body.model_dump(), result
+    )
+    return result
 
 
 @router.get("/discover/recommendations")
 async def recommendations():
-    return await discovery.recommend()
+    result = await discovery.recommend()
+    discovery_history.save("recommendations", "文献与偏好推荐", {}, result)
+    return result
+
+
+@router.get("/discover/history")
+def discovery_records(before: int = 0):
+    return discovery_history.listing(before)
+
+
+@router.get("/discover/history/{identifier}")
+def discovery_record(identifier: int):
+    return discovery_history.get(identifier)
 
 
 class Vote(BaseModel):
@@ -679,11 +772,18 @@ class Chart(BaseModel):
     unit: str = Field(default="Value", max_length=100)
     xscale: Literal["linear", "log"] = "linear"
     yscale: Literal["linear", "log"] = "linear"
+    project_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 @router.post("/charts")
 def chart(body: Chart):
-    return charts.create(body.model_dump())
+    token = projects.current.set(
+        projects.context(body.project_id) if body.project_id else None
+    )
+    try:
+        return charts.create(body.model_dump(exclude={"project_id"}))
+    finally:
+        projects.current.reset(token)
 
 
 @router.get("/charts/{identifier}/{filename}")
@@ -724,6 +824,7 @@ def chart_file(identifier: str, filename: str):
 class Diagram(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     code: str = Field(min_length=1, max_length=12000)
+    project_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 @router.post("/diagrams")
@@ -733,9 +834,17 @@ def diagram(body: Diagram):
         body.code,
     ):
         raise ValueError("请选择支持的 Mermaid 图类型")
-    if re.search(r"%%\{|\bclick\b|<|>|javascript:|https?://", body.code, re.I):
+    if re.search(r"%%\{|\bclick\b|<|>|javascript:|https?://", body.code, re.IGNORECASE):
         # Arrow syntax is permitted, HTML and external interactions are not.
         cleaned = re.sub(r"[-=.]+>", "", body.code)
-        if re.search(r"%%\{|\bclick\b|<|>|javascript:|https?://", cleaned, re.I):
+        if re.search(
+            r"%%\{|\bclick\b|<|>|javascript:|https?://", cleaned, re.IGNORECASE
+        ):
             raise ValueError("图脚本不允许 HTML、链接或交互指令")
-    return research.save_artifact("diagram", body.title, {"code": body.code})
+    token = projects.current.set(
+        projects.context(body.project_id) if body.project_id else None
+    )
+    try:
+        return research.save_artifact("diagram", body.title, {"code": body.code})
+    finally:
+        projects.current.reset(token)

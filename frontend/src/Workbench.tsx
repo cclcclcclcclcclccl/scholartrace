@@ -1,3 +1,12 @@
+import { AnswerChecklist, type Checklist } from "./AnswerChecklist";
+import { ImpactContinuation } from "./ImpactContinuation";
+import { useJobHistory } from "./useJobHistory";
+import { ReviewEvidence, type SemanticReview } from "./ReviewEvidence";
+import {
+  DiscoveryHistory,
+  discoveryTime,
+  type DiscoveryRecord,
+} from "./DiscoveryHistory";
 import { AnswerCoverage, type Subquestion } from "./AnswerCoverage";
 import {
   ExecutionResult,
@@ -42,6 +51,9 @@ import {
   type MatrixRow,
 } from "./ResearchTools";
 import { PageJump } from "./PageJump";
+import { LibraryBrowser } from "./LibraryBrowser";
+import { DocumentQuality } from "./DocumentQuality";
+import type { ProjectContext } from "./projectApi";
 import { FormulaPanel, FormulaResult } from "./FormulaPanel";
 import { TablePanel, TableResult, type TableContent } from "./TablePanel";
 import {
@@ -81,8 +93,11 @@ type Props = {
   onRefresh: () => Promise<void>;
   onLocate: (a: Anchor) => void;
   onTasks: () => void;
+  onRead: (id: string) => void;
+  onCompare: (ids: string[]) => void;
+  projectContext?: ProjectContext | null;
 };
-type Result = {
+export type Result = {
   id: string;
   kind: string;
   title: string;
@@ -216,7 +231,15 @@ export function Workbench(props: Props) {
     }
   }
   async function submit(kind: string, payload: Record<string, unknown>) {
-    const job = await request<Job>("/api/jobs", { kind, payload });
+    const job = await request<Job>("/api/jobs", {
+      kind,
+      payload: {
+        ...payload,
+        ...(props.projectContext
+          ? { project_id: props.projectContext.id }
+          : {}),
+      },
+    });
     setNotice(
       `任务已${job.state === "running" ? "开始" : "加入队列"}，可在“任务与成果”查看进度、停止或重试。`,
     );
@@ -283,10 +306,15 @@ function Library({
   busy,
   onRefresh,
   onLocate,
+  onRead,
+  onCompare,
 }: Tools) {
   const [identifier, setId] = useState(selected?.id || papers[0]?.id || "");
   const [title, setTitle] = useState("");
   const [aliases, setAliases] = useState("");
+  const [organizationRevision, setOrganizationRevision] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailPanel = useRef<HTMLDetailsElement>(null);
   const [archived, setArchived] = useState<Paper[]>([]);
   const [duplicates, setDuplicates] = useState<
     (Paper & {
@@ -328,10 +356,13 @@ function Library({
   return (
     <>
       <p className="work-intro">
-        管理原始
-        PDF、文献信息与处理状态。移入归档后可恢复，已保存的证据继续保留。
+        搜索、筛选和整理研究文献。点击标题继续阅读，勾选多篇后可批量分类、标记阅读进度或一起提问。
       </p>
       <Help>
+        <p>
+          先按分类、标签或阅读状态筛选，再勾选文献。表头复选框只选择当前筛选结果；切换筛选时保留已选项，并提示隐藏的选择。批量标签会追加，不覆盖原标签。可以撤销本页最近一次批量修改；离开页面后撤销入口不保留。所选清单导出为
+          JSON，不包含 PDF 和笔记。
+        </p>
         <p>
           顶部“导入文献”支持批量
           PDF。选择文献后可以修改标题和常用别名、解析章节与图表、识别扫描文字、检查同文版本。解析后点击“查看结构”核对原文。别名帮助问答识别论文中的模型名称，例如
@@ -342,320 +373,376 @@ function Library({
           OCR 失败时在任务页重试。
         </p>
       </Help>
-      <div className="work-card">
-        <div className="work-row">
-          <PaperSelect papers={papers} value={identifier} onChange={setId} />
-          <button
-            disabled={busy || !identifier}
-            onClick={() =>
-              void run(async () => {
-                setStructure(
-                  await request(`/api/documents/${identifier}/structure`),
-                );
-                setDuplicates(
-                  await request(`/api/documents/${identifier}/duplicates`),
-                );
-              })
-            }
-          >
-            查看结构与版本
-          </button>
-        </div>
-        <label>
-          显示标题
-          <input
-            aria-label="文献标题"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </label>
-        <label>
-          文献别名（用逗号分隔）
-          <input
-            aria-label="文献别名"
-            value={aliases}
-            placeholder="例如 GPT-1，用于识别问题中的文献简称"
-            onChange={(e) => setAliases(e.target.value)}
-          />
-        </label>
-        <div className="work-row">
-          <button
-            className="primary-button"
-            disabled={busy || !identifier || title.trim().length < 2}
-            onClick={() =>
-              void run(async () => {
-                await request(
-                  `/api/documents/${identifier}`,
-                  {
-                    title,
-                    aliases: aliases
-                      .split(/[,，;；\n]/)
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  },
-                  "PATCH",
-                );
-                await onRefresh();
-              })
-            }
-          >
-            保存文献信息
-          </button>
-          {(["parse", "ocr"] as const).map((kind, i) => (
-            <button
-              key={kind}
-              disabled={busy || !identifier}
-              onClick={() =>
-                void run(() => submit(kind, { document_id: identifier }))
-              }
-            >
-              {i ? "识别扫描文字" : "解析章节、图表与引用"}
-            </button>
-          ))}
-          <button
-            disabled={busy || !identifier}
-            onClick={() =>
-              void run(async () => {
-                await request(
-                  `/api/documents/${identifier}`,
-                  { archived: true },
-                  "PATCH",
-                );
-                setId("");
-                await onRefresh();
-                await reload();
-              })
-            }
-          >
-            <Archive size={15} />
-            移入归档
-          </button>
-        </div>
-        {duplicates.length > 0 && (
-          <div className="version-candidates">
-            <h3>检测到同文版本或语义相近文献</h3>
-            {duplicates.map((p) => (
-              <div key={p.id}>
-                <strong>{p.name}</strong>
-                <span>
-                  {" "}
-                  {p.match_status} · 标题语义{" "}
-                  {(p.semantic_title_similarity * 100).toFixed(1)}% · 内容词频{" "}
-                  {(p.content_cosine * 100).toFixed(1)}%{" "}
-                  {p.recommended_version_id === p.id ? "· 版本号较新" : ""}
-                </span>
+      <LibraryBrowser
+        papers={papers}
+        revision={organizationRevision}
+        onChanged={() => setOrganizationRevision((n) => n + 1)}
+        onRead={onRead}
+        onCompare={onCompare}
+        onManage={(id) => {
+          setId(id);
+          setDetailsOpen(true);
+          requestAnimationFrame(() =>
+            detailPanel.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            }),
+          );
+        }}
+      />
+      <details
+        className="library-detail-panel"
+        ref={detailPanel}
+        open={detailsOpen}
+        onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
+      >
+        <summary>
+          文献详情与校对 ·{" "}
+          {papers.find((p) => p.id === identifier)?.title || "选择文献"}
+        </summary>
+        {detailsOpen && (
+          <>
+            <div className="work-card">
+              <div className="work-row">
+                <PaperSelect
+                  papers={papers}
+                  value={identifier}
+                  onChange={setId}
+                />
                 <button
-                  disabled={busy}
+                  disabled={busy || !identifier}
                   onClick={() =>
                     void run(async () => {
-                      setDiff(
-                        await request("/api/versions/diff", {
-                          first: identifier,
-                          second: p.id,
-                        }),
+                      setStructure(
+                        await request(`/api/documents/${identifier}/structure`),
+                      );
+                      setDuplicates(
+                        await request(
+                          `/api/documents/${identifier}/duplicates`,
+                        ),
                       );
                     })
                   }
                 >
-                  对照全文变化
+                  查看结构与版本
                 </button>
+              </div>
+              <label>
+                显示标题
+                <input
+                  aria-label="文献标题"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </label>
+              <DocumentQuality
+                key={identifier}
+                identifier={identifier}
+                onLocate={onLocate}
+                onOcr={(page) =>
+                  submit("ocr", { document_id: identifier, page })
+                }
+                onRefresh={onRefresh}
+              />
+              <label>
+                文献别名（用逗号分隔）
+                <input
+                  aria-label="文献别名"
+                  value={aliases}
+                  placeholder="例如 GPT-1，用于识别问题中的文献简称"
+                  onChange={(e) => setAliases(e.target.value)}
+                />
+              </label>
+              <div className="work-row">
                 <button
+                  className="primary-button"
+                  disabled={busy || !identifier || title.trim().length < 2}
                   onClick={() =>
                     void run(async () => {
                       await request(
-                        `/api/documents/${p.id}`,
-                        { archived: true },
+                        `/api/documents/${identifier}`,
+                        {
+                          title,
+                          aliases: aliases
+                            .split(/[,，;；\n]/)
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        },
                         "PATCH",
                       );
                       await onRefresh();
-                      setDuplicates(duplicates.filter((v) => v.id !== p.id));
+                    })
+                  }
+                >
+                  保存文献信息
+                </button>
+                {(["parse", "ocr"] as const).map((kind, i) => (
+                  <button
+                    key={kind}
+                    disabled={busy || !identifier}
+                    onClick={() =>
+                      void run(() => submit(kind, { document_id: identifier }))
+                    }
+                  >
+                    {i ? "识别扫描文字" : "解析章节、图表与引用"}
+                  </button>
+                ))}
+                <button
+                  disabled={busy || !identifier}
+                  onClick={() =>
+                    void run(async () => {
+                      await request(
+                        `/api/documents/${identifier}`,
+                        { archived: true },
+                        "PATCH",
+                      );
+                      setId("");
+                      await onRefresh();
                       await reload();
                     })
                   }
                 >
-                  保留当前，归档此版本
+                  <Archive size={15} />
+                  移入归档
                 </button>
               </div>
-            ))}
-            <p>
-              保留两份无需额外操作。版本建议来自 PDF
-              中的编号；不会自动覆盖原文。
-            </p>
-          </div>
-        )}
-      </div>
-      {diff && (
-        <div className="work-card version-diff">
-          <h3>全文对照 · {diff.changes.length} 处差异</h3>
-          <p>{diff.notice}</p>
-          <p>
-            左侧：{papers.find((p) => p.id === diff.first)?.name}；右侧：
-            {papers.find((p) => p.id === diff.second)?.name}
-          </p>
-          <button
-            onClick={() =>
-              downloadText(
-                "version-diff.json",
-                JSON.stringify(diff, null, 2),
-                "application/json",
-              )
-            }
-          >
-            导出差异与出处
-          </button>
-          {diff.changes.map((change, i) => (
-            <details key={i}>
-              <summary>
-                变化 {i + 1} ·{" "}
-                {{
-                  replace: "内容变化",
-                  insert: "右侧新增",
-                  delete: "右侧未出现",
-                }[change.kind] || change.kind}{" "}
-                · {change.before.length} / {change.after.length} 段
-              </summary>
-              <div className="diff-columns">
-                {[change.before, change.after].map((blocks, side) => (
-                  <div key={side}>
-                    <h4>{side ? "对照版本" : "当前版本"}</h4>
-                    {!blocks.length && <p>此侧无对应段落</p>}
-                    {blocks.map((b, j) => (
-                      <div key={j}>
-                        <SourceButton anchor={b} onLocate={onLocate} />
-                        <p>{b.text}</p>
-                      </div>
-                    ))}
-                  </div>
+              {duplicates.length > 0 && (
+                <div className="version-candidates">
+                  <h3>检测到同文版本或语义相近文献</h3>
+                  {duplicates.map((p) => (
+                    <div key={p.id}>
+                      <strong>{p.name}</strong>
+                      <span>
+                        {" "}
+                        {p.match_status} · 标题语义{" "}
+                        {(p.semantic_title_similarity * 100).toFixed(1)}% ·
+                        内容词频 {(p.content_cosine * 100).toFixed(1)}%{" "}
+                        {p.recommended_version_id === p.id
+                          ? "· 版本号较新"
+                          : ""}
+                      </span>
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            setDiff(
+                              await request("/api/versions/diff", {
+                                first: identifier,
+                                second: p.id,
+                              }),
+                            );
+                          })
+                        }
+                      >
+                        对照全文变化
+                      </button>
+                      <button
+                        onClick={() =>
+                          void run(async () => {
+                            await request(
+                              `/api/documents/${p.id}`,
+                              { archived: true },
+                              "PATCH",
+                            );
+                            await onRefresh();
+                            setDuplicates(
+                              duplicates.filter((v) => v.id !== p.id),
+                            );
+                            await reload();
+                          })
+                        }
+                      >
+                        保留当前，归档此版本
+                      </button>
+                    </div>
+                  ))}
+                  <p>
+                    保留两份无需额外操作。版本建议来自 PDF
+                    中的编号；不会自动覆盖原文。
+                  </p>
+                </div>
+              )}
+            </div>
+            {diff && (
+              <div className="work-card version-diff">
+                <h3>全文对照 · {diff.changes.length} 处差异</h3>
+                <p>{diff.notice}</p>
+                <p>
+                  左侧：{papers.find((p) => p.id === diff.first)?.name}；右侧：
+                  {papers.find((p) => p.id === diff.second)?.name}
+                </p>
+                <button
+                  onClick={() =>
+                    downloadText(
+                      "version-diff.json",
+                      JSON.stringify(diff, null, 2),
+                      "application/json",
+                    )
+                  }
+                >
+                  导出差异与出处
+                </button>
+                {diff.changes.map((change, i) => (
+                  <details key={i}>
+                    <summary>
+                      变化 {i + 1} ·{" "}
+                      {{
+                        replace: "内容变化",
+                        insert: "右侧新增",
+                        delete: "右侧未出现",
+                      }[change.kind] || change.kind}{" "}
+                      · {change.before.length} / {change.after.length} 段
+                    </summary>
+                    <div className="diff-columns">
+                      {[change.before, change.after].map((blocks, side) => (
+                        <div key={side}>
+                          <h4>{side ? "对照版本" : "当前版本"}</h4>
+                          {!blocks.length && <p>此侧无对应段落</p>}
+                          {blocks.map((b, j) => (
+                            <div key={j}>
+                              <SourceButton anchor={b} onLocate={onLocate} />
+                              <p>{b.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 ))}
               </div>
-            </details>
-          ))}
-        </div>
-      )}
-      <div className="work-card">
-        <div className="work-row">
-          <h3>全库语义索引</h3>
-          <span>
-            {index
-              ? `${index.indexed_blocks.toLocaleString()} / ${index.total_blocks.toLocaleString()} 段`
-              : "读取中"}
-          </span>
-          <button
-            disabled={busy}
-            onClick={() => void run(() => submit("index", {}))}
-          >
-            补建索引
-          </button>
-          <button onClick={() => void run(reload)}>刷新状态</button>
-        </div>
-        <p>
-          关键词与多语言语义联合检索。新文献自动索引，索引期间仍可查关键词。
-        </p>
-      </div>
-      <LibraryOrganizer
-        key={`organize-${identifier}`}
-        identifier={identifier}
-        onSelect={setId}
-      />
-      {identifier && (
-        <TablePanel
-          key={`table-${identifier}`}
-          identifier={identifier}
-          pages={papers.find((p) => p.id === identifier)?.pages || 1}
-        />
-      )}
-      {identifier && (
-        <FormulaPanel
-          key={identifier}
-          identifier={identifier}
-          pages={papers.find((p) => p.id === identifier)?.pages || 1}
-        />
-      )}
-      {structure && (
-        <div className="work-card">
-          <h3>文献结构 · {structure.complete ? "解析完成" : "尚未完成"}</h3>
-          <p>{structure.abstract}</p>
-          {structure.author_affiliation_source && (
-            <details>
-              <summary>作者与机构原文</summary>
-              <pre>{structure.author_affiliation_source}</pre>
-            </details>
-          )}
-          <div className="structure-list">
-            {structure.headings?.map((h, i) => (
-              <SourceButton key={i} anchor={h} onLocate={onLocate}>
-                {h.text}
-              </SourceButton>
-            ))}
-          </div>
-          {structure.pages
-            .filter(
-              (p) => p.figures.length || p.equations.length || p.tables.length,
-            )
-            .map((p) => (
-              <details key={p.page}>
-                <summary>
-                  第 {p.page} 页 · {p.figures.length} 个图表标题 ·{" "}
-                  {p.equations.length} 个公式片段 · {p.tables.length} 张表格
-                </summary>
-                {[...p.figures, ...p.equations].map((a, i) => (
-                  <div key={i}>
-                    <SourceButton anchor={a} onLocate={onLocate}>
-                      {"caption" in a ? a.caption : a.text}
+            )}
+            <div className="work-card">
+              <div className="work-row">
+                <h3>全库语义索引</h3>
+                <span>
+                  {index
+                    ? `${index.indexed_blocks.toLocaleString()} / ${index.total_blocks.toLocaleString()} 段`
+                    : "读取中"}
+                </span>
+                <button
+                  disabled={busy}
+                  onClick={() => void run(() => submit("index", {}))}
+                >
+                  补建索引
+                </button>
+                <button onClick={() => void run(reload)}>刷新状态</button>
+              </div>
+              <p>
+                关键词与多语言语义联合检索。新文献自动索引，索引期间仍可查关键词。
+              </p>
+            </div>
+            <LibraryOrganizer
+              key={`organize-${identifier}-${organizationRevision}`}
+              identifier={identifier}
+              onSelect={setId}
+              onSaved={() => setOrganizationRevision((n) => n + 1)}
+            />
+            {identifier && (
+              <TablePanel
+                key={`table-${identifier}`}
+                identifier={identifier}
+                pages={papers.find((p) => p.id === identifier)?.pages || 1}
+              />
+            )}
+            {identifier && (
+              <FormulaPanel
+                key={identifier}
+                identifier={identifier}
+                pages={papers.find((p) => p.id === identifier)?.pages || 1}
+              />
+            )}
+            {structure && (
+              <div className="work-card">
+                <h3>
+                  文献结构 · {structure.complete ? "解析完成" : "尚未完成"}
+                </h3>
+                <p>{structure.abstract}</p>
+                {structure.author_affiliation_source && (
+                  <details>
+                    <summary>作者与机构原文</summary>
+                    <pre>{structure.author_affiliation_source}</pre>
+                  </details>
+                )}
+                <div className="structure-list">
+                  {structure.headings?.map((h, i) => (
+                    <SourceButton key={i} anchor={h} onLocate={onLocate}>
+                      {h.text}
                     </SourceButton>
-                    <img
-                      className="source-crop"
-                      loading="lazy"
-                      alt="原文区域"
-                      src={`/api/documents/${identifier}/crop?page=${a.page}&x0=${Math.max(0, a.bbox[0] - 5)}&y0=${Math.max(0, a.bbox[1] - 10)}&x1=${a.bbox[2] + 5}&y1=${a.bbox[3] + 10}`}
-                    />
-                  </div>
-                ))}
-                {p.tables.map((t, i) => (
-                  <div className="table-scroll" key={i}>
-                    <table>
-                      <tbody>
-                        {t.rows.map((r, j) => (
-                          <tr key={j}>
-                            {r.map((c, k) => (
-                              <td key={k}>{c}</td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <small>几何提取候选；请与 PDF 对照。</small>
-                  </div>
-                ))}
-              </details>
-            ))}
-        </div>
-      )}
-      <div className="work-card">
-        <h3>归档文献 · {archived.length}</h3>
-        {archived.map((p) => (
-          <div className="work-row" key={p.id}>
-            <span>{p.title}</span>
-            <button
-              onClick={() =>
-                void run(async () => {
-                  await request(
-                    `/api/documents/${p.id}`,
-                    { archived: false },
-                    "PATCH",
-                  );
-                  await onRefresh();
-                  await reload();
-                })
-              }
-            >
-              <RotateCcw size={14} />
-              恢复
-            </button>
-          </div>
-        ))}
-        {!archived.length && <p>暂无归档文献。</p>}
-      </div>
+                  ))}
+                </div>
+                {structure.pages
+                  .filter(
+                    (p) =>
+                      p.figures.length || p.equations.length || p.tables.length,
+                  )
+                  .map((p) => (
+                    <details key={p.page}>
+                      <summary>
+                        第 {p.page} 页 · {p.figures.length} 个图表标题 ·{" "}
+                        {p.equations.length} 个公式片段 · {p.tables.length}{" "}
+                        张表格
+                      </summary>
+                      {[...p.figures, ...p.equations].map((a, i) => (
+                        <div key={i}>
+                          <SourceButton anchor={a} onLocate={onLocate}>
+                            {"caption" in a ? a.caption : a.text}
+                          </SourceButton>
+                          <img
+                            className="source-crop"
+                            loading="lazy"
+                            alt="原文区域"
+                            src={`/api/documents/${identifier}/crop?page=${a.page}&x0=${Math.max(0, a.bbox[0] - 5)}&y0=${Math.max(0, a.bbox[1] - 10)}&x1=${a.bbox[2] + 5}&y1=${a.bbox[3] + 10}`}
+                          />
+                        </div>
+                      ))}
+                      {p.tables.map((t, i) => (
+                        <div className="table-scroll" key={i}>
+                          <table>
+                            <tbody>
+                              {t.rows.map((r, j) => (
+                                <tr key={j}>
+                                  {r.map((c, k) => (
+                                    <td key={k}>{c}</td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <small>几何提取候选；请与 PDF 对照。</small>
+                        </div>
+                      ))}
+                    </details>
+                  ))}
+              </div>
+            )}
+            <div className="work-card">
+              <h3>归档文献 · {archived.length}</h3>
+              {archived.map((p) => (
+                <div className="work-row" key={p.id}>
+                  <span>{p.title}</span>
+                  <button
+                    onClick={() =>
+                      void run(async () => {
+                        await request(
+                          `/api/documents/${p.id}`,
+                          { archived: false },
+                          "PATCH",
+                        );
+                        await onRefresh();
+                        await reload();
+                      })
+                    }
+                  >
+                    <RotateCcw size={14} />
+                    恢复
+                  </button>
+                </div>
+              ))}
+              {!archived.length && <p>暂无归档文献。</p>}
+            </div>
+          </>
+        )}
+      </details>
     </>
   );
 }
@@ -983,6 +1070,15 @@ type RemotePaper = {
     reproduction: string;
   }[];
   vote?: number;
+  reason?: string;
+  library_matches?: {
+    id: string;
+    title: string;
+    version: number | null;
+    match: string;
+    name?: string;
+    different_version: boolean;
+  }[];
   retrieval_status?: string;
   retrieved_at?: string;
 };
@@ -994,7 +1090,104 @@ type Tracker = {
   error?: string;
   papers: RemotePaper[];
 };
-function Discover({ run, submit, busy, setNotice }: Tools) {
+type RelatedResult = {
+  seed: { id: string; title: string };
+  local: (Paper & { reason: string })[];
+  papers: RemotePaper[];
+  query: string;
+  method: string;
+  warnings: string[];
+  unavailable_local_count?: number;
+};
+function Discover({
+  run,
+  submit,
+  busy,
+  setNotice,
+  papers: library,
+  selected,
+  onRead,
+}: Tools) {
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [snapshot, setSnapshot] = useState<DiscoveryRecord | null>(null);
+  function restore(record: DiscoveryRecord) {
+    setSnapshot(record);
+    const spec = record.spec;
+    if (record.kind === "search") {
+      setQuery(String(spec.query || ""));
+      setMode(String(spec.mode || "topic"));
+      setSource(String(spec.source || "arxiv"));
+      setLatest(Boolean(spec.latest));
+      setYearFrom(spec.year_from ? String(spec.year_from) : "");
+      setYearTo(spec.year_to ? String(spec.year_to) : "");
+      setSearchStart(Number(spec.start || 0));
+      setSearchSpec(spec);
+      setPapers(record.view as RemotePaper[]);
+      setRelated(null);
+    } else {
+      const view = record.view as RelatedResult;
+      setPapers(view.papers);
+      setSearchSpec(null);
+      setRelated(record.kind === "related" ? view : null);
+      if (record.kind === "related") {
+        setSeedId(String(spec.document_id || ""));
+        setOnline(Boolean(spec.online));
+        setRelatedSource(String(spec.source || "crossref"));
+      }
+    }
+    setResultLabel(`历史发现 · ${record.label}`);
+    setNotice(
+      "已恢复当时的查询条件和结果；尚未重新联网检索。库内可阅读记录按当前状态显示。",
+    );
+  }
+  async function repeatSnapshot() {
+    if (!snapshot) return;
+    if (snapshot.kind === "search") {
+      await searchPapers(Number(snapshot.spec.start || 0), true, true);
+      return;
+    }
+    if (snapshot.kind === "related") {
+      const result = await request<RelatedResult>("/api/discover/related", {
+        ...snapshot.spec,
+        force: true,
+      });
+      setRelated(result);
+      setPapers(result.papers);
+      setResultLabel(`关联发现 · ${result.seed.title}`);
+    } else {
+      const result = await request<{ papers: RemotePaper[]; reason: string }>(
+        "/api/discover/recommendations",
+      );
+      setPapers(result.papers);
+      setNotice(result.reason);
+      setResultLabel("根据文献与偏好推荐");
+    }
+    setSnapshot(null);
+    setHistoryRefresh((v) => v + 1);
+  }
+  const [mode, setMode] = useState("topic");
+  const [seedId, setSeedId] = useState(selected?.id || "");
+  const [related, setRelated] = useState<RelatedResult | null>(null);
+  const [online, setOnline] = useState(false);
+  const [relatedSource, setRelatedSource] = useState("crossref");
+  const [resultLabel, setResultLabel] = useState("");
+  async function findRelated(seed: {
+    document_id?: string;
+    paper_id?: string;
+  }) {
+    const result = await request<RelatedResult>("/api/discover/related", {
+      ...seed,
+      online,
+      source: relatedSource,
+    });
+    setSnapshot(null);
+    setHistoryRefresh((v) => v + 1);
+    setRelated(result);
+    setPapers(result.papers);
+    setSearchSpec(null);
+    setResultLabel(`关联发现 · ${result.seed.title}`);
+    setNotice("关联结果已更新；推荐理由用于初筛，请阅读原文确认。");
+  }
   const [query, setQuery] = useState("retrieval augmented generation evidence");
   const [source, setSource] = useState("arxiv");
   const [yearFrom, setYearFrom] = useState("");
@@ -1010,6 +1203,7 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
         ? searchSpec
         : {
             query,
+            mode,
             source,
             latest,
             year_from: yearFrom ? Number(yearFrom) : null,
@@ -1020,12 +1214,20 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
       start,
       force,
     });
+    setSnapshot(null);
+    setHistoryRefresh((v) => v + 1);
     setPapers(result);
+    setRelated(null);
+    setResultLabel(
+      `${spec.mode === "identifier" ? "编号直查" : spec.mode === "title" ? "标题检索" : "主题检索"} · ${spec.query}`,
+    );
     setSearchStart(start);
     setSearchSpec(spec);
     setNotice(
       result.length
-        ? `第 ${start + 1}—${start + result.length} 条；可逐页继续发现。`
+        ? spec.mode === "identifier"
+          ? "已找到编号对应的论文，请核对作者与版本。"
+          : `第 ${start + 1}—${start + result.length} 条；可逐页继续发现。`
         : "此查询页未返回结果，可调整条件或切换数据源。外部接口错误会单独提示。",
     );
   }
@@ -1048,9 +1250,11 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
         </div>
         {p.retrieval_status && p.retrieval_status !== "live" && (
           <small className="work-notice">
-            {p.retrieval_status === "stale_after_error"
-              ? "在线请求失败，展示历史缓存；并非最新结果"
-              : "10 分钟内的查询缓存"}{" "}
+            {p.retrieval_status === "snapshot"
+              ? "历史发现记录，不是本次在线查询"
+              : p.retrieval_status === "stale_after_error"
+                ? "在线请求失败，展示历史缓存；并非最新结果"
+                : "10 分钟内的查询缓存"}{" "}
             · {p.retrieved_at}
           </small>
         )}
@@ -1060,7 +1264,34 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
           </a>
         </h3>
         <small>{p.authors.slice(0, 7).join(" · ")}</small>
-        <p>{p.abstract || "此数据源未提供摘要，可打开来源页查看。"}</p>
+        <div className="discovery-badges">
+          <span>
+            {p.pdf_url ? "提供开放全文下载入口" : "元数据记录 · 全文需另查"}
+          </span>
+          {p.library_matches?.length ? (
+            <span>库中有 {p.library_matches.length} 份匹配记录</span>
+          ) : null}
+        </div>
+        {p.reason && <p className="discovery-reason">为什么推荐：{p.reason}</p>}
+        <details className="discovery-abstract">
+          <summary>查看摘要与初筛依据</summary>
+          <p>{p.abstract || "此数据源未提供摘要，可打开来源页查看。"}</p>
+        </details>
+        {p.library_matches?.map((m) => (
+          <div className="discovery-library-match" key={m.id}>
+            <span>
+              {m.match === "arxiv_id"
+                ? "同一 arXiv 论文"
+                : "同标题候选，需核对身份"}{" "}
+              · 库中 {m.version ? `v${m.version}` : "版本未知"}
+              {m.different_version ? " · 与搜索结果版本不同" : ""}
+              {m.name ? ` · ${m.name}` : ""}
+            </span>
+            <button onClick={() => onRead(m.id)}>
+              阅读库中{m.version ? ` v${m.version}` : "记录"}
+            </button>
+          </div>
+        ))}
         <div className="work-row">
           <button
             disabled={busy || !p.pdf_url}
@@ -1070,6 +1301,12 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
           >
             <Download size={14} />
             {p.pdf_url ? "下载全文并入库" : "暂无可自动下载的全文"}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => void run(() => findRelated({ paper_id: p.id }))}
+          >
+            以此篇找相关文章
           </button>
           <button
             aria-label={`喜欢 ${p.title}`}
@@ -1136,13 +1373,35 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
   }
   return (
     <>
-      <p className="work-intro">
-        从真实学术数据源发现论文，保存检索主题，追踪后续更新。
-      </p>
+      <div className="discovery-hero">
+        <div className="eyebrow">发现 → 阅读取证 → 版本复核</div>
+        <h2>从一篇好论文，找到下一篇。</h2>
+        <p>
+          按标题、主题或编号查找，沿关联文献继续探索。搜索返回真实数据源记录；原文核验从全文入库后开始。
+        </p>
+      </div>
       <Help>
         <p>
-          输入英文主题、论文标题或参考文献。arXiv 支持开放全文下载和
-          ti:/au:/cat: 查询；Crossref 补充 DOI 元数据，未提供全文时会明确提示。
+          ① 想找指定文章：选择“论文标题”，填写标题；已知 DOI 或 arXiv
+          编号时选“编号 / 链接”，直接粘贴编号、doi.org 或 arxiv.org
+          链接。编号模式自动选择数据源，不使用年份、排序和分页。标题匹配仍需核对作者和版本。
+        </p>
+        <p>
+          ②
+          想扩展阅读：选择库中种子论文，或点击搜索卡片“以此篇找相关文章”。默认只查本地；勾选“同时查找在线论文”后，使用所选关联数据源扩展。标题与可用摘要中的共同主题词仅是初筛依据，不是引用关系或论文质量评分。
+        </p>
+        <p>
+          ③
+          下载全文并入库后，在阅读台提问并核对出处，将重要判断存为证据笔记。出现同篇不同版本时保留两个版本，再到“版本复核”检查旧笔记；系统不自动替换旧证据。
+        </p>
+        <p>
+          ④ arXiv 支持开放全文下载与 ti:/au:/cat: 查询；Crossref 提供 DOI
+          元数据，无全文时可打开来源页。标题和主题检索的年份与最新排序可用；摘要不是已核验的全文结论。
+        </p>
+        <p>
+          ⑤
+          每次成功返回的搜索或关联探索会自动保存到“最近发现记录”。离开页面、刷新后可恢复查询条件与当时结果，也可导出
+          JSON。恢复不会联网；要更新结果，请点“按记录条件重新检索”。记录逐页加载，属于当前账户。
         </p>
         <p>
           点击“每 24
@@ -1152,7 +1411,8 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
         </p>
       </Help>
       <form
-        className="work-card"
+        className="work-card discovery-search"
+        data-mode={mode}
         onSubmit={(e) => {
           e.preventDefault();
           void run(() => searchPapers());
@@ -1163,14 +1423,33 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
             aria-label="论文检索词"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="输入论文标题、英文主题或引用条目"
+            placeholder={
+              mode === "identifier"
+                ? "1706.03762v7 / DOI / 论文链接"
+                : mode === "title"
+                  ? "例如 Attention Is All You Need"
+                  : "英文主题词，或 arXiv 高级查询"
+            }
             maxLength={500}
           />
           <select
+            aria-label="检索方式"
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+          >
+            <option value="topic">研究主题</option>
+            <option value="title">论文标题</option>
+            <option value="identifier">编号 / 链接</option>
+          </select>
+          <select
+            disabled={mode === "identifier"}
             aria-label="论文数据源"
-            value={source}
+            value={mode === "identifier" ? "auto" : source}
             onChange={(e) => setSource(e.target.value)}
           >
+            {mode === "identifier" && (
+              <option value="auto">按编号自动识别</option>
+            )}
             <option value="arxiv">arXiv</option>
             <option value="crossref">Crossref</option>
           </select>
@@ -1183,6 +1462,7 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
             搜索论文
           </button>
           <input
+            disabled={mode === "identifier"}
             aria-label="发表起始年份"
             type="number"
             min={1900}
@@ -1192,6 +1472,7 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
             placeholder="起始年份"
           />
           <input
+            disabled={mode === "identifier"}
             aria-label="发表结束年份"
             type="number"
             min={1900}
@@ -1203,6 +1484,7 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
           <label>
             <input
               type="checkbox"
+              disabled={mode === "identifier"}
               checked={latest}
               onChange={(e) => setLatest(e.target.checked)}
             />
@@ -1210,7 +1492,9 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
           </label>
           <button
             type="button"
-            disabled={busy || !query.trim()}
+            disabled={
+              busy || !query.trim() || mode !== "topic" || source !== "arxiv"
+            }
             onClick={() =>
               void run(async () => {
                 await request("/api/trackers", { query, interval_hours: 24 });
@@ -1223,7 +1507,118 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
           </button>
         </div>
       </form>
-      {searchSpec && (
+      <details className="work-card discovery-seed" aria-label="相关文章探索">
+        <summary>围绕一篇论文找相关工作</summary>
+        <div className="work-row">
+          <select
+            aria-label="关联种子论文"
+            value={seedId}
+            onChange={(e) => setSeedId(e.target.value)}
+          >
+            <option value="">选择库中论文</option>
+            {library.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title} {p.version ? `· v${p.version}` : ""}
+              </option>
+            ))}
+          </select>
+          <label>
+            <input
+              type="checkbox"
+              checked={online}
+              onChange={(e) => setOnline(e.target.checked)}
+            />
+            同时查找在线论文
+          </label>
+          <select
+            aria-label="关联数据源"
+            disabled={!online}
+            value={relatedSource}
+            onChange={(e) => setRelatedSource(e.target.value)}
+          >
+            <option value="crossref">Crossref</option>
+            <option value="arxiv">arXiv</option>
+          </select>
+          <button
+            disabled={busy || !seedId}
+            onClick={() => void run(() => findRelated({ document_id: seedId }))}
+          >
+            查找相关文章
+          </button>
+        </div>
+        <small>
+          优先利用当前文献库；在线请求失败时仍保留本地结果。选择上方在线开关，也会用于搜索卡片的“以此篇找相关文章”。
+        </small>
+      </details>
+      <DiscoveryHistory
+        refreshKey={historyRefresh}
+        disabled={busy}
+        onRestore={restore}
+      />
+      {snapshot && (
+        <div className="work-card discovery-snapshot" role="status">
+          <strong>
+            正在查看历史结果 · {discoveryTime(snapshot.created_at)}
+          </strong>
+          <p>
+            恢复不会自动联网。历史结果保留当时内容，库内版本入口和可用状态按当前文献库显示。
+          </p>
+          <button disabled={busy} onClick={() => void run(repeatSnapshot)}>
+            按记录条件重新检索
+          </button>
+        </div>
+      )}
+      {related && (
+        <section
+          className="work-card discovery-related"
+          aria-label="关联发现结果"
+        >
+          <h3>种子论文：{related.seed.title}</h3>
+          <p>{related.method}</p>
+          <details>
+            <summary>查看实际检索词</summary>
+            <code>{related.query}</code>
+          </details>
+          {related.warnings.map((w) => (
+            <p role="alert" key={w}>
+              {w}
+            </p>
+          ))}
+          {!!related.unavailable_local_count && (
+            <p>
+              {related.unavailable_local_count}{" "}
+              条历史库内结果当前已删除或归档，已隐藏阅读入口；原始记录仍可导出。
+            </p>
+          )}
+          <h4>库内相关论文 · {related.local.length} 篇</h4>
+          {related.local.map((p) => (
+            <div className="discovery-local" key={p.id}>
+              <div>
+                <strong>{p.title}</strong>
+                <p>
+                  {p.reason} · {p.version ? `v${p.version}` : "版本未知"}
+                </p>
+              </div>
+              <button onClick={() => onRead(p.id)}>打开阅读</button>
+            </div>
+          ))}
+          {!related.local.length && (
+            <p>
+              库中未找到共同标题词。这不代表没有语义相关的论文，可尝试在线扩展或自行改写主题检索。
+            </p>
+          )}
+        </section>
+      )}
+      {resultLabel && (
+        <div className="discovery-results-heading">
+          <h3>{resultLabel}</h3>
+          <span>本页在线结果 {papers.length} 条</span>
+          <small>
+            数据源记录 ≠ AI 已阅读全文；作者、版本和结论需继续核验。
+          </small>
+        </div>
+      )}
+      {searchSpec && searchSpec.mode !== "identifier" && (
         <div className="work-row">
           <button
             disabled={busy || searchStart === 0}
@@ -1260,8 +1655,12 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
         持续检查，不受本次分页和年份筛选限制。
       </p>
       {papers.map(card)}
-      {!papers.length && (
-        <Empty>输入研究问题，从检索结果开始建立文献库。</Empty>
+      {!papers.length && !related && (
+        <Empty>
+          {resultLabel
+            ? "本次未返回论文。请核对编号、尝试更短的标题或切换数据源。"
+            : "从标题、DOI / arXiv 编号或研究主题开始；也可以选择库中论文探索关联工作。"}
+        </Empty>
       )}
       <div className="work-card">
         <div className="work-row">
@@ -1274,7 +1673,11 @@ function Discover({ run, submit, busy, setNotice }: Tools) {
                   papers: RemotePaper[];
                   reason: string;
                 }>("/api/discover/recommendations");
+                setSnapshot(null);
+                setHistoryRefresh((v) => v + 1);
                 setPapers(r.papers);
+                setRelated(null);
+                setResultLabel("根据文献与偏好推荐");
                 setSearchSpec(null);
                 setNotice(r.reason);
               })
@@ -1554,11 +1957,23 @@ function Graph({ run, busy, onLocate }: Tools) {
   );
 }
 
-function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
+function Studio({
+  papers,
+  selected,
+  run,
+  submit,
+  busy,
+  setNotice,
+  projectContext,
+}: Tools) {
   const [topic, setTopic] = useState(
-    "分析 Transformer 的注意力架构及计算效率，并提出可验证的改进研究方案",
+    projectContext?.goal ||
+      projectContext?.title ||
+      "分析 Transformer 的注意力架构及计算效率，并提出可验证的改进研究方案",
   );
-  const [ids, setIds] = useState<string[]>(selected ? [selected.id] : []);
+  const [ids, setIds] = useState<string[]>(
+    projectContext?.document_ids || (selected ? [selected.id] : []),
+  );
   const [mode, setMode] = useState("review");
   const [code, setCode] = useState(
     "flowchart LR\n  A[导入文献] --> B[段落解析]\n  B --> C[混合检索]\n  C --> D[引用核验]\n  D --> E[科研结论]",
@@ -1623,7 +2038,13 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
     const value = await mermaid.render("diagram-" + Date.now(), source);
     setSvg(value.svg);
     if (save)
-      await request("/api/diagrams", { title: "研究流程图", code: source });
+      await request("/api/diagrams", {
+        title: projectContext
+          ? `${projectContext.title} · 研究流程图`
+          : "研究流程图",
+        code: source,
+        project_id: projectContext?.id,
+      });
   }
   return (
     <>
@@ -1632,7 +2053,7 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
       </p>
       <Help>
         <p>
-          选择文献范围后生成综述、写作框架或未来工作时间线；不选文献表示查全库。Agent
+          选择文献范围后生成综述、写作框架或未来工作时间线；普通工作室不选文献表示查全库，项目工作室必须明确选择项目文献。Agent
           模式先生成工具计划，校验参数，再执行并记录结果。任务完成后在“任务与成果”查看和导出。
         </p>
         <p>
@@ -1669,7 +2090,10 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
           <button
             className="primary-button"
             disabled={
-              busy || !topic.trim() || (mode === "future" && ids.length !== 1)
+              busy ||
+              !topic.trim() ||
+              (!!projectContext && !ids.length) ||
+              (mode === "future" && ids.length !== 1)
             }
             onClick={() =>
               void run(() =>
@@ -1702,7 +2126,12 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
         </div>
         <details>
           <summary>
-            文献范围：{ids.length ? `已选 ${ids.length} 篇` : "全库"}
+            文献范围：
+            {ids.length
+              ? `已选 ${ids.length} 篇`
+              : projectContext
+                ? "未选择文献"
+                : "全库"}
             （未来工作须选一篇）
           </summary>
           <div className="paper-checklist">
@@ -1725,11 +2154,18 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
           </div>
         </details>
       </div>
+      {projectContext && (
+        <p className="work-intro">
+          下方实验设计、执行预检与实验统计保存后，请在项目的“研究成果”中手动关联；综述、方案、矩阵、问答和图稿会自动收纳。
+        </p>
+      )}
       <ProtocolEditor documents={ids} />
       <MeasurementLab />
       <div className="work-card">
         <h3>架构与流程图</h3>
-        <p>使用上方研究目标生成模块和连线，生成后可继续编辑脚本。</p>
+        <p>
+          在研究目标中写明模块、先后顺序、分支条件和反馈关系；可指定从左到右或从上到下。判断节点至少保留两个不同条件的分支。生成后请核对图意，并继续编辑脚本。
+        </p>
         <button
           disabled={busy || !!diagramJob || !topic.trim()}
           onClick={() =>
@@ -1935,6 +2371,7 @@ function Studio({ papers, selected, run, submit, busy, setNotice }: Tools) {
                   unit,
                   xscale,
                   yscale,
+                  project_id: projectContext?.id,
                 }),
               ),
             )
@@ -1975,7 +2412,9 @@ const stateLabels: Record<string, string> = {
   interrupted: "等待恢复",
 };
 function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
-  const [tasks, setTasks] = useState<Job[]>([]);
+  const history = useJobHistory();
+  const tasks = history.items;
+  const [refreshError, setRefreshError] = useState("");
   const [artifacts, setArtifacts] = useState<
     { id: string; kind: string; title: string }[]
   >([]);
@@ -1985,30 +2424,38 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
   >([]);
   const [result, setResult] = useState<Result | null>(null);
   const refresh = async () => {
-    setTasks(await request("/api/jobs"));
+    await history.refresh();
     setArtifacts(await request("/api/artifacts"));
   };
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       try {
-        const [j, a] = await Promise.all([
-          request<Job[]>("/api/jobs"),
-          request<typeof artifacts>("/api/artifacts"),
-        ]);
+        const a = await request<typeof artifacts>(
+          "/api/artifacts",
+          undefined,
+          "GET",
+          15000,
+        );
         if (alive) {
-          setTasks(j);
           setArtifacts(a);
+          setRefreshError("");
         }
-      } catch {
-        /* Keep last visible state during reconnection. */
+      } catch (e) {
+        if (alive)
+          setRefreshError(
+            "成果刷新失败，已有记录保留：" + (e as Error).message,
+          );
+      } finally {
+        if (alive) timer = setTimeout(() => void tick(), 2500);
       }
     };
     void tick();
-    const id = setInterval(() => void tick(), 2500);
+
     return () => {
       alive = false;
-      clearInterval(id);
+      clearTimeout(timer);
     };
   }, []);
   useEffect(() => {
@@ -2055,6 +2502,24 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
           刷新任务和文献库
         </button>
       </div>
+      {refreshError && (
+        <p role="alert" className="work-error">
+          {refreshError}
+        </p>
+      )}
+      {history.error && (
+        <p role="alert" className="work-error">
+          {history.error}
+        </p>
+      )}
+      {history.cursor !== null && (
+        <button
+          disabled={history.loading}
+          onClick={() => void history.loadOlder()}
+        >
+          加载更早任务
+        </button>
+      )}
       <div className="tasks-layout">
         <div>
           {tasks.map((t) => (
@@ -2067,6 +2532,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
                   {(
                     {
                       parse: "结构解析",
+                      ask: "后台论文问答",
                       ocr: "扫描识别",
                       index: "语义索引",
                       translate: "双语翻译",
@@ -2185,6 +2651,7 @@ function Tasks({ run, busy, onLocate, onRefresh }: Tools) {
 }
 
 type Section = {
+  answer_checklist?: Checklist;
   subquestions?: Subquestion[];
   title: string;
   claims: {
@@ -2220,7 +2687,7 @@ type ImpactItem = {
       })
     | null;
   explanation: string;
-  semantic_review?: { decision?: string; reason: string; method?: string };
+  semantic_review?: SemanticReview;
 };
 type ProgressAssessment = {
   question: { text: string; quote: string };
@@ -2230,7 +2697,7 @@ type ProgressAssessment = {
   claims?: Section["claims"];
   evidence: Section["evidence"];
 };
-function Artifact({
+export function Artifact({
   result,
   onLocate,
 }: {
@@ -2244,6 +2711,14 @@ function Artifact({
   return (
     <article className="work-card artifact-result">
       <h2>{result.title}</h2>
+      {typeof c.project_context === "object" &&
+        c.project_context !== null &&
+        "title" in c.project_context && (
+          <p className="project-explanation">
+            生成时所属项目：{String(c.project_context.title)}
+            。项目后来改名或移出成果，不会改写这份生成记录。
+          </p>
+        )}
       <div className="work-row">
         <a href={`/api/artifacts/${result.id}/export?format=md`}>
           下载 Markdown
@@ -2348,6 +2823,13 @@ function Artifact({
       {(result.kind === "matrix" ? [] : sections).map((s, i) => (
         <section key={i}>
           <h3>{s.title}</h3>
+          <AnswerChecklist
+            value={s.answer_checklist}
+            onLocate={(id) => {
+              const b = s.evidence.find((b) => b.id === id);
+              if (b) onLocate(b);
+            }}
+          />
           <AnswerCoverage
             items={s.subquestions}
             sources={s.evidence}
@@ -2358,9 +2840,13 @@ function Artifact({
           />
           {s.claims.map((claim, j) => {
             const b = s.evidence.find((e) => e.id === claim.block_id);
+            const displayQuestion =
+              s.subquestions?.find(
+                (part) => part.context_question === claim.subquestion,
+              )?.question || claim.subquestion;
             return (
               <div key={j} className="grounded-claim">
-                {claim.subquestion && <small>{claim.subquestion}</small>}
+                {displayQuestion && <small>{displayQuestion}</small>}
                 <p>{claim.text}</p>
                 {claim.support_span && (
                   <details>
@@ -2528,8 +3014,17 @@ function Artifact({
         <>
           <p>
             找到 {Number(c.total_dependencies)} 条成果引用依赖，本次检查{" "}
-            {Number(c.checked)} 条。
+            {Number(c.checked)} 条；此前批次已检查{" "}
+            {Number(c.checked_before || 0)} 条。
           </p>
+          {Array.isArray(c.pending_dependencies) &&
+            c.pending_dependencies.length > 0 && (
+              <ImpactContinuation
+                reportId={result.id}
+                targetId={String((c.target as { id: string }).id)}
+                remaining={c.pending_dependencies.length}
+              />
+            )}
           {(c.impact as ImpactItem[]).map((item, i) => (
             <section className="grounded-claim" key={i}>
               <h3>{item.artifact_title}</h3>
@@ -2546,9 +3041,12 @@ function Artifact({
                     ? item.semantic_review.method
                       ? "原文规则核对未见变化"
                       : "模型初判论断未变"
-                    : item.explanation}
+                    : item.semantic_review?.decision === "unclear"
+                      ? "含义不确定 · 需要人工核对"
+                      : item.explanation}
               </strong>
               <p>{item.semantic_review?.reason}</p>
+              <ReviewEvidence review={item.semantic_review} />
               <blockquote>原引用：{item.note.quote}</blockquote>
               {item.candidate && (
                 <>

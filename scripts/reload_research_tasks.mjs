@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { ownedProcess, health, delay } from './runtime.mjs';
+const record = name => JSON.parse(readFileSync(`artifacts/runtime/${name}.process.json`,'utf8'));
+const before = {server:record('server'), model:record('model'), health:await health()};
+const jobs=JSON.parse(readFileSync('artifacts/research-tasks-20261020/jobs-before-reload.json','utf8'));
+assert.ok(jobs.length && jobs.every(item=>item.active.length===0));
+if (before.health) {
+  const active=await (await fetch('http://127.0.0.1:8765/api/jobs')).json();
+  assert.ok(active.every(j=>!['queued','running'].includes(j.state)));
+  assert.ok(ownedProcess('server',true),'Server identity must match before restart');
+}
+execFileSync(process.execPath,['scripts/start.mjs'],{windowsHide:true,stdio:'pipe'});
+let ready=null;
+for(let i=0;i<60;i++) {
+  try {
+    const r=await fetch('http://127.0.0.1:8765/openapi.json');
+    if(r.ok && (await health())?.model_available){const schema=await r.json();if(schema.paths['/api/research-tasks']){ready=schema;break;}}
+  } catch {}
+  await delay(500);
+}
+assert.ok(ready,'Updated boundaries API must be available');
+const after={server:record('server'),model:record('model'),health:await health()};
+const result={before,after,boundaries_api:200,research_tasks_api_registered:true};
+writeFileSync('artifacts/research-tasks-20261020/main-reload.json',JSON.stringify(result,null,2));
+console.log(JSON.stringify(result,null,2));

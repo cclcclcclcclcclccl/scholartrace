@@ -3,10 +3,12 @@
 import asyncio
 import json
 from difflib import SequenceMatcher
+
 import httpx
-from . import store, jobs, research, audit, model
+
+from . import jobs, model, research, store
+from .alignment import EXPLANATIONS, SourceAligner
 from .review import review_change
-from .alignment import SourceAligner, EXPLANATIONS
 
 
 def claims_in(value):
@@ -50,30 +52,45 @@ def align(claim, target_id, aligner=None):
 @jobs.register("impact")
 async def impact(ctx, payload):
     target = store.get_document(payload["document_id"])
-    sources = {}
-    for doc in store.list_documents():
-        if doc["id"] != target["id"] and (
-            (target["arxiv_id"] and doc["arxiv_id"] == target["arxiv_id"])
-            or research.normalized_title(doc["title"])
-            == research.normalized_title(target["title"])
+    previous = None
+    offset = 0
+    if payload.get("impact_from"):
+        previous = research.artifact(payload["impact_from"])
+        if (
+            previous["kind"] != "impact"
+            or previous["content"].get("target", {}).get("id") != target["id"]
         ):
-            sources[doc["id"]] = doc
-    with store.connection() as conn:
-        items = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM artifacts WHERE kind IN ('answer','review','writing','future','agent','matrix') ORDER BY created_at DESC"
-            )
-        ]
-    dependencies = []
-    seen = set()
-    for item in items:
-        for claim in claims_in(json.loads(item["content"])):
-            key = (item["id"], claim["block_id"], claim["text"])
-            if claim["document_id"] not in sources or key in seen:
-                continue
-            seen.add(key)
-            dependencies.append((item, claim))
+            raise ValueError("复核批次的目标版本不一致")
+        content = previous["content"]
+        dependencies = content.get("pending_dependencies", [])
+        if not dependencies:
+            raise ValueError("该报告已没有未检查依赖")
+        offset = content.get("checked_before", 0) + content["checked"]
+    else:
+        sources = {}
+        for doc in store.list_documents():
+            if doc["id"] != target["id"] and (
+                (target["arxiv_id"] and doc["arxiv_id"] == target["arxiv_id"])
+                or research.normalized_title(doc["title"])
+                == research.normalized_title(target["title"])
+            ):
+                sources[doc["id"]] = doc
+        with store.connection() as conn:
+            items = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM artifacts WHERE kind IN ('answer','review','writing','future','agent','matrix') ORDER BY created_at DESC"
+                )
+            ]
+        dependencies = []
+        seen = set()
+        for item in items:
+            for claim in claims_in(json.loads(item["content"])):
+                key = (item["id"], claim["block_id"], claim["text"])
+                if claim["document_id"] not in sources or key in seen:
+                    continue
+                seen.add(key)
+                dependencies.append(({"id": item["id"], "title": item["title"]}, claim))
     results = []
     aligner = await asyncio.to_thread(SourceAligner, store.get_blocks(target["id"]))
     for i, (item, claim) in enumerate(dependencies[:30]):
@@ -83,11 +100,13 @@ async def impact(ctx, payload):
         )
         aligned = await asyncio.to_thread(align, claim, target["id"], aligner)
         if aligned["candidate"]:
-            async with model.gate:
-                async with httpx.AsyncClient(timeout=80, trust_env=False) as client:
-                    aligned["semantic_review"] = await review_change(
-                        aligned, client, model.URL, model.NAME
-                    )
+            async with (
+                model.gate,
+                httpx.AsyncClient(timeout=80, trust_env=False) as client,
+            ):
+                aligned["semantic_review"] = await review_change(
+                    aligned, client, model.URL, model.NAME
+                )
         results.append(
             {"artifact_id": item["id"], "artifact_title": item["title"], **aligned}
         )
@@ -101,9 +120,12 @@ async def impact(ctx, payload):
                 "version": target["version"],
             },
             "impact": results,
-            "total_dependencies": len(dependencies),
+            "total_dependencies": offset + len(dependencies),
+            "checked_before": offset,
+            "previous_report": payload.get("impact_from"),
+            "pending_dependencies": dependencies[30:],
             "checked": len(results),
-            "notice": "复核保存过的回答、证据矩阵、综述、方案与 Agent 成果中的引用依赖。人工编辑稿尚未建立逐句依赖，不在自动核验范围。历史成果不改写；一次最多核验 30 条，模型含义判断仍需人工确认。",
+            "notice": "复核保存过的回答、证据矩阵、综述、方案与 Agent 成果中的引用依赖。人工编辑稿尚未建立逐句依赖，不在自动核验范围。历史成果不改写；每批最多核验 30 条，可沿原始依赖快照继续下一批。后续新成果需重新发起复核；模型含义判断仍需人工确认。",
         },
     )
 

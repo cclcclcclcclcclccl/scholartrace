@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { readFile, writeFile } from 'node:fs/promises';
+const {chromium} = createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder='artifacts/project-workspace-2026-10-14';
+const base='http://127.0.0.1:8765';
+const starter=JSON.parse(await readFile(`${folder}/starter-project.json`,'utf8'));
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const report={checks:[],errors:[]};
+try {
+  const context=await browser.newContext({viewport:{width:1440,height:1000}});
+  const page=await context.newPage();
+  page.on('pageerror',e=>report.errors.push(String(e)));
+  await page.goto(`${base}/#project=missing-project-for-ui-check`);
+  await page.getByRole('dialog').waitFor();await page.keyboard.press('Escape');
+  await page.locator('.project-workspace [role=alert]').waitFor();
+  await page.locator('.project-card').filter({hasText:starter.title}).click();
+  await page.getByRole('heading',{name:starter.title,exact:true}).waitFor();
+  report.checks.push('无效项目深链接仍加载项目列表，点击已有项目可恢复');
+  await page.getByRole('button',{name:'编辑目标与文献',exact:true}).click();
+  const draftTitle=`${starter.title}（未保存草稿）`;
+  await page.getByLabel('编辑项目名称').fill(draftTitle);
+  const worker=await context.newPage();
+  worker.on('pageerror',e=>report.errors.push(String(e)));
+  await worker.goto(`${base}/#project=${starter.id}`);
+  await worker.getByRole('button',{name:'进入项目工作室',exact:true}).click();
+  // Actual local model + actual durable queue; no mocked response or injected handler.
+  const submitted=worker.waitForResponse(r=>r.url().endsWith('/api/jobs')&&r.request().method()==='POST');
+  await worker.getByRole('button',{name:'按研究目标生成图稿',exact:true}).click();
+  const job=await (await submitted).json();
+  assert.ok(job.id);report.job_id=job.id;
+  console.log('真实后台图稿任务执行中：'+job.id);
+  let done;
+  for(let i=0;i<90;i++){
+    done=await (await worker.request.get(`${base}/api/jobs/${job.id}`)).json();
+    if(['completed','failed','cancelled'].includes(done.state))break;
+    await new Promise(resolve=>setTimeout(resolve,2000));
+  }
+  await writeFile(`${folder}/real-project-job.json`,JSON.stringify(done,null,2));
+  assert.equal(done.state,'completed',done.error);
+  report.artifact_id=done.result.id;
+  const result=await (await worker.request.get(`${base}/api/artifacts/${done.result.id}`)).json();
+  assert.equal(result.content.project_context.id,starter.id);
+  assert.deepEqual(result.content.project_context.source_document_ids,[]);
+  report.checks.push('真实本地模型图稿任务完成，成果携带项目快照；图稿未检索论文，来源范围记为空');
+  const conflict=page.waitForResponse(r=>r.url().includes(`/api/projects/${starter.id}`)&&r.request().method()==='PATCH');
+  await page.getByRole('button',{name:'保存项目设置',exact:true}).click();
+  assert.equal((await conflict).status(),409);
+  await page.locator('.project-workspace [role=alert]').filter({hasText:'项目已在其他页面更新'}).waitFor();
+  assert.equal(await page.getByLabel('编辑项目名称').inputValue(),draftTitle);
+  report.checks.push('后台成果到达后，旧页面保存返回409；草稿仍保留，不覆盖新成果关联');
+  await page.getByRole('button',{name:'放弃草稿并刷新',exact:true}).click();
+  const refreshed=await (await page.request.get(`${base}/api/projects/${starter.id}`)).json();
+  await page.getByRole('button',{name:`最近任务 ${refreshed.jobs.length}`,exact:true}).click();
+  await page.getByText('已完成',{exact:false}).first().waitFor();
+  await page.screenshot({path:`${folder}/project-jobs.png`});
+  const data=await (await page.request.get(`${base}/api/projects/${starter.id}`)).json();
+  assert.ok(data.artifacts.some(a=>a.id===done.result.id));
+  assert.equal(data.title,starter.title);
+  await page.getByRole('button',{name:'项目文献 2',exact:true}).click();
+  await page.screenshot({path:`${folder}/project-final-desktop.png`});
+  await page.getByRole('button',{name:`研究成果 ${data.artifacts.length}`,exact:true}).click();
+  await page.locator('.project-output').filter({hasText:result.title}).getByRole('button',{name:'打开成果',exact:true}).click();
+  await page.locator('.artifact-diagram svg, .diagram-preview svg').first().waitFor();
+  await page.screenshot({path:`${folder}/generated-project-diagram.png`,fullPage:true});
+  report.checks.push('最近任务展示真实完成状态，生成图稿可在项目中打开并渲染');
+  const download=page.waitForEvent('download');
+  await page.getByRole('link',{name:'导出项目摘要',exact:true}).click();
+  await (await download).saveAs(`${folder}/project-export.json`);
+  assert.deepEqual(report.errors,[]);report.passed=true;
+} catch(e){report.failure=String(e);throw e;}
+finally{await writeFile(`${folder}/job-ui-report.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));await browser.close();}

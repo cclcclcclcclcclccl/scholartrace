@@ -95,7 +95,7 @@ def test_part_failure_preserves_later_answer_and_scope(monkeypatch, first_failur
     generation_prompts = []
 
     async def complete(system, prompt, **kwargs):
-        if system.startswith("你负责为一个子问题"):
+        if "selected" in kwargs.get("schema", {}).get("properties", {}):
             if "第一项" in prompt:
                 if first_failure == "request_failure":
                     raise ValueError("invalid model response")
@@ -121,7 +121,8 @@ def test_part_failure_preserves_later_answer_and_scope(monkeypatch, first_failur
     assert queries == [("first", ["doc"]), ("second", ["doc"])]
 
 
-def test_grounded_coverage_uses_reviewed_results(monkeypatch):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_grounded_coverage_uses_reviewed_results(monkeypatch, scoped):
     b = block()
     monkeypatch.setattr(
         store, "get_document", lambda identifier: {"title": "Paper", "metadata": {}}
@@ -155,7 +156,7 @@ def test_grounded_coverage_uses_reviewed_results(monkeypatch):
     monkeypatch.setattr(research, "answer_parts", parts_answer)
 
     async def complete(system, prompt, **kwargs):
-        if "strict evidence reviewer" in system:
+        if "decisions" in kwargs.get("schema", {}).get("properties", {}):
             return {
                 "decisions": {
                     "0": {
@@ -176,13 +177,128 @@ def test_grounded_coverage_uses_reviewed_results(monkeypatch):
         }
 
     monkeypatch.setattr(research.model, "complete", complete)
-    result = asyncio.run(research.grounded("编码器是什么？解码器是什么？", ["doc"]))
+    result = asyncio.run(
+        research.grounded("编码器是什么？解码器是什么？", ["doc"], scoped=scoped)
+    )
     assert len(result["claims"]) == 1
     assert [p["status"] for p in result["subquestions"]] == [
         "reviewed_answer",
         "unresolved",
     ]
     assert result["limitations"]
+    assert [p["question"] for p in result["subquestions"]] == [
+        "编码器是什么？",
+        "解码器是什么？",
+    ]
+
+
+def test_dedup_never_removes_another_subquestion_or_paper():
+    from backend.claim_checks import prune_repeated_facts
+
+    blocks = [
+        block("one", "The hidden dimension is 768."),
+        {**block("two", "The hidden dimension is 768."), "document_id": "other"},
+    ]
+    claims = [
+        {
+            "text": "隐藏维度为768。",
+            "evidence_id": "E1",
+            "quote": blocks[0]["text"],
+            "part_id": "Q1",
+        },
+        {
+            "text": "隐藏维度为768。",
+            "evidence_id": "E1",
+            "quote": blocks[0]["text"],
+            "part_id": "Q2",
+        },
+        {
+            "text": "隐藏维度为768。",
+            "evidence_id": "E2",
+            "quote": blocks[1]["text"],
+            "part_id": "Q1",
+        },
+    ]
+    accepted = research.valid_claims({"claims": claims + [claims[0]]}, blocks)
+    assert len(accepted) == 3
+    assert prune_repeated_facts(accepted) == accepted
+    assert all(
+        p["status"] == "reviewed_answer"
+        for p in subquestions.coverage(
+            subquestions.split_question("维度是多少？隐藏维度是什么？"), accepted[:2]
+        )
+    )
+
+
+def test_empty_and_skipped_papers_keep_original_parts(monkeypatch, tmp_path):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "isolated.sqlite3")
+    database.initialize()
+    monkeypatch.setattr(
+        store,
+        "get_document",
+        lambda identifier: {
+            "title": "Shared title",
+            "name": identifier + ".pdf",
+            "metadata": {},
+        },
+    )
+    monkeypatch.setattr(research.retrieval, "search", lambda *args: [])
+    monkeypatch.setattr(research, "expand_neighbors", lambda blocks, limit: blocks)
+    monkeypatch.setattr("backend.query_facets.concept_evidence", lambda *args: [])
+
+    async def complete(*args, **kwargs):
+        return {
+            "question": "Discarded rewrite",
+            "query": "encoder",
+            "facets": [],
+            "part_queries": {},
+        }
+
+    monkeypatch.setattr(research.model, "complete", complete)
+    result = asyncio.run(
+        research.grounded("编码器是什么？解码器是什么？", [str(i) for i in range(9)])
+    )
+    assert len(result["comparison"]) == 9
+    assert len(result["subquestions"]) == 18
+    assert len({p["id"] for p in result["subquestions"]}) == 18
+    assert "8.pdf" in result["subquestions"][-1]["question"]
+    assert "未检索到" in result["comparison"][0]["subquestions"][0]["reason"]
+    assert "未处理" in result["comparison"][-1]["subquestions"][0]["reason"]
+
+
+def test_failed_paper_does_not_discard_other_paper(monkeypatch, tmp_path):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "isolated.sqlite3")
+    database.initialize()
+    original = research.grounded
+    monkeypatch.setattr(
+        store,
+        "get_document",
+        lambda identifier: {"title": identifier, "name": identifier + ".pdf"},
+    )
+    b = {**block(), "document_id": "good"}
+
+    async def scoped(question, ids, *args, **kwargs):
+        if len(ids) > 1:
+            return await original(question, ids, *args, **kwargs)
+        if ids == ["bad"]:
+            raise ValueError("invalid generation")
+        return {
+            "claims": [
+                {
+                    "text": "使用固定编码器。",
+                    "block_id": b["id"],
+                    "document_id": "good",
+                    "quote": b["text"],
+                }
+            ],
+            "evidence": [b],
+        }
+
+    monkeypatch.setattr(research, "grounded", scoped)
+    result = asyncio.run(research.grounded("编码器是什么？", ["bad", "good"]))
+    assert result["claims"][0]["document_id"] == "good"
+    assert result["claims"][0]["evidence_id"] == "E1"
+    assert "处理失败" in result["comparison"][0]["subquestions"][0]["reason"]
 
 
 def test_unresolved_answer_saved_reopened_and_exported(tmp_path, monkeypatch):
@@ -288,3 +404,64 @@ def test_absence_of_comparison_needs_source(quote, rejected):
     assert (
         semantic_overreach("论文并未直接比较这两种嵌入的性能差异。", quote) == rejected
     )
+
+
+def test_partial_answer_retains_omitted_candidate_notice_and_source():
+    parts = [
+        {
+            "id": "Q1",
+            "question": "分别多少？",
+            "candidate_claim_count": 3,
+            "selected_evidence_ids": ["source-a", "source-b"],
+        }
+    ]
+    item = subquestions.coverage(parts, [{"part_id": "Q1", "text": "一个已保留事实"}])[
+        0
+    ]
+    assert item["status"] == "reviewed_answer"
+    assert item["omitted_candidate_count"] == 2
+    assert item["selected_evidence_ids"] == ["source-a", "source-b"]
+    assert "被去重" in item["reason"] and "不代表本项完整" in item["reason"]
+    # A second pass after multi-document subject filtering must recompute counts.
+    reduced = subquestions.coverage([item], [])[0]
+    assert reduced["omitted_candidate_count"] == 3 and reduced["status"] == "unresolved"
+    assert (
+        subquestions.coverage([{"id": "legacy"}], [{"part_id": "legacy"}])[0][
+            "omitted_candidate_count"
+        ]
+        == 0
+    )
+
+
+def test_partly_answered_export_preserves_notice_and_candidate_location():
+    source = block("source", "Evidence candidate")
+    parts = subquestions.coverage(
+        [
+            {
+                "id": "Q1",
+                "question": "两个模型各是多少？",
+                "candidate_claim_count": 2,
+                "selected_evidence_ids": ["source"],
+            }
+        ],
+        [{"part_id": "Q1"}],
+    )
+    item = {
+        "title": "Partial",
+        "kind": "answer",
+        "content": {
+            "sections": [
+                {
+                    "title": "Answer",
+                    "claims": [],
+                    "subquestions": parts,
+                    "evidence": [source],
+                }
+            ]
+        },
+    }
+    markdown = research.export_markdown(item)
+    assert parts[0]["reason"] in markdown
+    assert "1 条回答通过初筛" in markdown
+    assert "候选原文（未经支持性确认）" in markdown
+    assert "doc p.1" in markdown and "/ source" in markdown

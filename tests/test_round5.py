@@ -180,7 +180,7 @@ def test_grounded_requires_real_support_span(
     monkeypatch.setattr(research, "expand_neighbors", lambda blocks, limit: blocks)
 
     async def complete(system, prompt, **kwargs):
-        if "strict evidence reviewer" in system:
+        if "decisions" in kwargs.get("schema", {}).get("properties", {}):
             allowed = kwargs["schema"]["properties"]["decisions"]["properties"]["0"][
                 "properties"
             ]["support_span"]["enum"]

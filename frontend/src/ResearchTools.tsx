@@ -164,9 +164,11 @@ export function ReadingTools({
 export function LibraryOrganizer({
   identifier,
   onSelect,
+  onSaved,
 }: {
   identifier: string;
   onSelect: (id: string) => void;
+  onSaved?: () => void;
 }) {
   const [tags, setTags] = useState("");
   const [collection, setCollection] = useState("");
@@ -263,6 +265,7 @@ export function LibraryOrganizer({
                 "PATCH",
               );
               setNotice("分类、标签与阅读状态已保存。");
+              onSaved?.();
               await refresh();
             } catch (e) {
               setNotice(String(e));

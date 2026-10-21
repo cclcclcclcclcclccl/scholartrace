@@ -1,0 +1,161 @@
+.recall-panel {
+  margin: 24px 0;
+  padding: 24px;
+  border: 1px solid #cbded5;
+  border-radius: 18px;
+  background: linear-gradient(120deg, #eef7f1, #f8faf6);
+}
+.recall-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+.recall-heading h2 {
+  margin: 8px 0;
+  font-size: 22px;
+}
+.recall-heading p {
+  color: #486253;
+  line-height: 1.7;
+}
+.recall-heading button {
+  flex-shrink: 0;
+}
+.recall-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 28px;
+  margin: 22px 0;
+  color: #486253;
+}
+.recall-stats strong {
+  font-size: 24px;
+  color: #184e40;
+}
+.recall-builder {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #cbded5;
+  border-radius: 10px;
+  background: #fff;
+}
+.recall-builder summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.recall-builder label {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+.recall-builder select,
+.recall-panel textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbded5;
+  border-radius: 8px;
+  padding: 12px;
+  font: inherit;
+  background: #fff;
+  color: #18382e;
+}
+.recall-panel textarea {
+  min-height: 96px;
+  resize: vertical;
+  margin-bottom: 12px;
+}
+.recall-controls {
+  margin: 16px 0;
+}
+.recall-controls a {
+  color: #205f4c;
+  text-underline-offset: 4px;
+  font-size: 13px;
+}
+.recall-card {
+  padding: 24px;
+  background: white;
+  border: 1px solid #cbded5;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px #1e4b3a08;
+}
+.recall-card h3 {
+  font-size: 21px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.recall-card p,
+.recall-card blockquote {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.recall-card blockquote {
+  margin: 14px 0;
+  border-left: 3px solid #4e9073;
+  padding: 16px;
+  background: #f4f8f5;
+  max-height: 340px;
+  overflow: auto;
+}
+.recall-draft {
+  padding: 12px;
+  background: #f7f5ec;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+.recall-ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.recall-panel button:not(.primary-button):not(.text-button) {
+  border: 1px solid #c3d7cc;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #fff;
+  color: #214e3c;
+  cursor: pointer;
+}
+.recall-ratings button:first-child {
+  background: #faf3e8 !important;
+}
+.recall-ratings button:last-child {
+  background: #e9f4ed !important;
+}
+.recall-panel button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.recall-panel button:focus-visible,
+.recall-panel a:focus-visible {
+  outline: 3px solid #80b99c;
+  outline-offset: 3px;
+}
+.recall-empty {
+  padding: 30px 18px;
+  background: #fff;
+  border-radius: 12px;
+  line-height: 1.8;
+  text-align: center;
+}
+@media (max-width: 600px) {
+  .recall-panel {
+    padding: 16px;
+  }
+  .recall-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .recall-heading h2 {
+    font-size: 19px;
+  }
+  .recall-card {
+    padding: 16px;
+  }
+  .recall-ratings button {
+    width: 100%;
+  }
+}
