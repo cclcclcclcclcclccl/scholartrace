@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>墨衡 Moheng · 进入科研工作台</title>
+<style>body{margin:0;background:#f2f6f1;color:#193f37;font:17px/1.8 system-ui,"Microsoft YaHei",sans-serif}main{max-width:660px;margin:12vh auto;padding:32px;background:white;border:1px solid #dbe5dc;border-radius:16px}h1{line-height:1.35}a{color:#21674e;overflow-wrap:anywhere}button{font:inherit;border:0;background:#234f43;color:white;padding:10px 22px;border-radius:8px;cursor:pointer}.muted{color:#566a60;font-size:14px}@media(max-width:700px){main{margin:30px 14px;padding:24px}}</style>
+</head>
+<body><main><p>MOHENG / 墨衡</p><h1>进入科研工作台</h1><p id="status" role="status" aria-live="polite">正在获取当前工作台地址，随后自动进入……</p><button id="retry" type="button" hidden>重新尝试</button><p><a href="./">项目介绍、演示视频与使用说明</a></p><p class="muted">请使用随提交材料提供的评审专用账号。完整工作台需作者主机在线；若工作台出现连接错误，请稍后重试或联系作者。</p><noscript><p>浏览器未启用JavaScript，请打开上方项目介绍页，点击“进入在线科研工作台”。</p></noscript></main>
+<script>
+const statusNode=document.querySelector('#status');
+const retry=document.querySelector('#retry');
+async function enter(){
+ retry.hidden=true;statusNode.textContent='正在获取当前工作台地址，随后自动进入……';
+ try{
+  const response=await fetch('./runtime.json?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(12000)});
+  if(!response.ok)throw Error('地址配置暂时不可用');
+  const config=await response.json();
+  if(typeof config.url!=='string'||!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/?$/.test(config.url))throw Error('地址配置无效');
+  statusNode.textContent='已获取工作台地址，正在跳转……';
+  location.replace(config.url);
+ }catch(error){statusNode.textContent='暂时无法获取工作台地址。请重试，或打开项目介绍页查看访问说明。';retry.hidden=false;}
+}
+retry.addEventListener('click',enter);enter();
+</script>
+</body></html>
