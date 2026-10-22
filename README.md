@@ -8,12 +8,22 @@
 
 - [项目与评审入口](https://cclcclcclcclcclccl.github.io/scholartrace/)
 - [源码仓库](https://github.com/cclcclcclcclcclccl/scholartrace)
-- [最终版材料下载](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/moheng-final-20261021)
+- [最终版材料下载](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/moheng-handoff-20261022)
 - [最终轮对标、修改与验收](docs/墨衡_最终轮对标与验收_2026-10-21.md)
 - [逐步使用教程](docs/评审使用指南_2026-10-21.md)
 - [需求验收矩阵](docs/需求验收矩阵.md) 与 [历轮原始开发记录](docs/开发历史与历轮验收.md)
 
 在线入口页为静态导航；完整应用通过独立评审服务运行。免费隧道和本机模型依赖主机开机联网，无长期可用性保证。评审账号另附于提交材料，不公开密码。链接的实际发布、连通及最终提交状态见随包清单。
+
+## 2026-10-22交付补充
+
+本轮同步公网恢复与提交材料，科研功能和演示保留2026-10-21基线。新增当前用户登录启动与健康检查；尚未完成独立网络或24/72小时可用性证明。
+
+- [提交总览与版本边界](docs/提交总览与版本说明_2026-10-22.md)
+- [提交前真实抽查与创新证据](docs/提交前实测与创新证据_2026-10-22.md)
+- [免费评审运行与故障恢复](docs/免费评审运行与故障恢复_2026-10-22.md)
+- [答辩速学与演练](docs/作者答辩速学与演练_2026-10-22.md)
+- [独立网络和同学试用步骤](docs/同学试用与独立网络核验_2026-10-22.md)
 
 ## 六大模块
 

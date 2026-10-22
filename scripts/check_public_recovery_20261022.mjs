@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile,writeFile} from 'node:fs/promises';
+const {chromium}=createRequire(import.meta.url)('C:/Users/34711/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const folder='artifacts/public-recovery-20261022';
+const base=(await readFile('artifacts/public-review-20261021/url.txt','utf8')).trim();
+const credentials=JSON.parse(await readFile('artifacts/public-review-20261021/review-access.json','utf8'));
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const report={url:base,checks:[],errors:[],complete:false,notice:'Public HTTPS round-trip from development machine; not independent-network or long-duration availability proof.'};
+try{
+ const context=await browser.newContext({viewport:{width:1440,height:1000}});
+ const page=await context.newPage();page.setDefaultTimeout(45000);
+ page.on('pageerror',e=>report.errors.push(String(e)));
+ assert.equal((await page.request.get(base+'/api/documents')).status(),401);
+ report.checks.push('Anonymous document access denied');
+ await page.goto(base);assert.match(await page.title(),/墨衡/);await page.getByRole('dialog').waitFor();await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:/研究空间与账号/}).click();
+ await page.getByLabel('用户名',{exact:true}).fill(credentials.name);
+ await page.getByLabel('密码',{exact:true}).fill(credentials.password);
+ const signedIn=page.waitForResponse(r=>r.url().endsWith('/api/documents')&&r.status()===200);
+ await page.getByRole('button',{name:'登录',exact:true}).click();await signedIn;
+ const docs=await(await page.request.get(base+'/api/documents')).json();assert.equal(docs.length,5);
+ report.checks.push('Reviewer login and isolated five-paper library');
+ const cookies=await context.cookies();const session=cookies.find(c=>c.name==='scholartrace_session');
+ assert.ok(session?.secure&&session?.httpOnly);report.checks.push('Secure HttpOnly session cookie');
+ await page.setViewportSize({width:390,height:844});
+ const paper=docs.find(d=>d.name==='1706.03762v1.pdf');
+ await page.getByRole('button',{name:/文献阅读台/}).first().click();
+ await page.getByLabel('选择阅读文献').selectOption(paper.id);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ await page.getByLabel('研究问题',{exact:true}).fill('Transformer训练使用了什么GPU？');
+ const pending=page.waitForResponse(r=>r.url().endsWith('/api/ask')&&r.request().method()==='POST',{timeout:240000});
+ await page.getByLabel('研究问题',{exact:true}).press('Enter');
+ const answer=await pending;assert.equal(answer.status(),200);const result=await answer.json();
+ assert.ok(result.model_answer?.length);assert.ok(result.evidence.every(e=>e.document_id===paper.id));
+ await writeFile(folder+'/public-answer.json',JSON.stringify(result,null,2));
+ report.checks.push('Real model answer through public HTTPS with correct paper scope');
+ await page.screenshot({path:folder+'/public-mobile.png',fullPage:true});
+ await page.setViewportSize({width:1440,height:1000});await page.screenshot({path:folder+'/public-desktop.png'});
+ assert.deepEqual(report.errors,[]);report.complete=true;
+}catch(e){report.failure=String(e);throw e;}
+finally{await writeFile(folder+'/public-browser.json',JSON.stringify(report,null,2));await browser.close();console.log(JSON.stringify(report,null,2));}

@@ -1,5 +1,17 @@
 ﻿param([switch]$UpdateEntry)
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 can otherwise negotiate obsolete TLS and fail HTTPS.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+function Wait-ReviewHealth([string]$BaseUrl, [int]$Attempts = 12) {
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        try {
+            $result = Invoke-RestMethod "$BaseUrl/api/health" -TimeoutSec 10
+            if ($result.service -eq 'scholartrace') { return $result }
+        } catch { }
+        if ($attempt -lt $Attempts - 1) { Start-Sleep -Seconds 2 }
+    }
+    throw "Review service not ready after retries: $BaseUrl"
+}
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $projectRoot
 $reviewRoot = Join-Path $projectRoot 'artifacts/public-review-20261021'
@@ -20,6 +32,8 @@ if (-not $serviceReady) {
         Remove-Item Env:SCHOLARTRACE_REGISTRATION -ErrorAction SilentlyContinue
     }
 }
+# Wait for the origin before creating or publishing a tunnel.
+$null = Wait-ReviewHealth 'http://127.0.0.1:8768'
 $url = ''
 $urlFile = Join-Path $reviewRoot 'url.txt'
 if (Test-Path -LiteralPath $urlFile) {
@@ -43,18 +57,16 @@ if (-not $url) {
     Set-Content -LiteralPath $urlFile -Value $url -Encoding UTF8
 }
 # Only anonymous health is requested here; no reviewer credentials leave localhost.
-$health = Invoke-RestMethod "$url/api/health" -TimeoutSec 30
+$health = Wait-ReviewHealth $url
 if ($health.service -ne 'scholartrace') { throw 'Unexpected service at tunnel URL' }
 if ($UpdateEntry) {
-    $repo = 'cclcclcclcclcclccl/scholartrace'
-    $state = & gh api "repos/$repo/contents/runtime.json?ref=gh-pages" | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to read Pages configuration' }
-    $content = @{url=$url; checked_at=(Get-Date -Format 'yyyy-MM-dd'); status='免费隧道健康接口已检查；需保持电脑开机联网，未证明长期可用性。'} | ConvertTo-Json
-    $body = @{message='Refresh free review endpoint'; branch='gh-pages'; sha=$state.sha; content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($content))} | ConvertTo-Json
-    $requestFile = Join-Path $reviewRoot 'pages-update.json'
-    [IO.File]::WriteAllText($requestFile,$body,[Text.UTF8Encoding]::new($false))
-    & gh api "repos/$repo/contents/runtime.json" --method PUT --input $requestFile --silent
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to update fixed entrance' }
+    & (Join-Path $projectRoot '.venv/Scripts/python.exe') -X utf8 (Join-Path $PSScriptRoot 'refresh_review_entry.py')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Direct review endpoint is available: $url"
+        throw 'The app is running, but the fixed entrance could not be updated. Share the direct endpoint temporarily.'
+    }
 }
 Write-Host "Review endpoint: $url"
 Write-Host 'Keep this computer awake and online. No authenticated public test was performed.'
+
+& (Join-Path $projectRoot '.venv/Scripts/python.exe') -X utf8 (Join-Path $PSScriptRoot 'review_watchdog.py') start
