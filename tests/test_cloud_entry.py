@@ -6,6 +6,7 @@ from scripts.cloud_entry import bootstrap
 def test_cloud_bootstrap_requires_secret_before_creating_data(tmp_path, monkeypatch):
     monkeypatch.setattr(store, 'ROOT', tmp_path)
     monkeypatch.setattr(accounts, 'AUTH_PATH', tmp_path / 'data/accounts.sqlite3')
+    monkeypatch.setenv('SCHOLARTRACE_DATA_DIR', str(tmp_path / 'data'))
     monkeypatch.delenv('MOHENG_REVIEW_PASSWORD', raising=False)
     with pytest.raises(ValueError, match='MOHENG_REVIEW_PASSWORD'):
         bootstrap()
@@ -15,6 +16,7 @@ def test_cloud_bootstrap_requires_secret_before_creating_data(tmp_path, monkeypa
 def test_cloud_bootstrap_hashes_password_and_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(store, 'ROOT', tmp_path)
     monkeypatch.setattr(accounts, 'AUTH_PATH', tmp_path / 'data/accounts.sqlite3')
+    monkeypatch.setenv('SCHOLARTRACE_DATA_DIR', str(tmp_path / 'data'))
     monkeypatch.setenv('MOHENG_REVIEW_PASSWORD', 'only-a-test-password-12345')
     first = bootstrap()
     second = bootstrap()
@@ -40,3 +42,18 @@ def test_cloud_data_root_is_a_persistent_volume_when_configured(tmp_path, monkey
     monkeypatch.setenv('SCHOLARTRACE_DATA_DIR', str(tmp_path / 'persistent'))
     assert accounts.data_root() == tmp_path / 'persistent'
     assert accounts.path('reviewer') == tmp_path / 'persistent' / 'accounts' / 'reviewer' / 'library.sqlite3'
+
+
+def test_cloud_data_dir_falls_back_when_persistent_mount_is_unavailable(tmp_path):
+    from scripts.cloud_entry import choose_data_dir
+    blocked = tmp_path / 'blocked'
+    blocked.write_text('not a directory', encoding='ascii')
+    chosen = choose_data_dir(blocked / 'persistent', tmp_path / 'container-data')
+    assert chosen == tmp_path / 'container-data'
+    assert chosen.is_dir()
+
+
+def test_cloud_data_dir_prefers_available_persistent_mount(tmp_path):
+    from scripts.cloud_entry import choose_data_dir
+    chosen = choose_data_dir(tmp_path / 'persistent', tmp_path / 'container-data')
+    assert chosen == tmp_path / 'persistent'

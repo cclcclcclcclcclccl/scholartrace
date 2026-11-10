@@ -12,10 +12,25 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def choose_data_dir(preferred, fallback):
+    """Use the platform volume when mounted; otherwise keep a runnable container."""
+    for candidate in (Path(preferred), Path(fallback)):
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / '.moheng-write-check'
+            probe.write_text('ok', encoding='ascii')
+            probe.unlink()
+            return candidate
+        except (OSError, PermissionError):
+            continue
+    raise RuntimeError('No writable data directory is available')
+
+
 def bootstrap():
     from backend import accounts, database, store
-    data_dir = os.environ.get('SCHOLARTRACE_DATA_DIR', '/mnt/workspace/moheng-data')
-    os.environ['SCHOLARTRACE_DATA_DIR'] = data_dir
+    configured = os.environ.get('SCHOLARTRACE_DATA_DIR')
+    data_dir = Path(configured) if configured else choose_data_dir('/mnt/workspace/moheng-data', ROOT / 'data')
+    os.environ['SCHOLARTRACE_DATA_DIR'] = str(data_dir)
     store.DB_PATH = Path(data_dir) / 'scholartrace.sqlite3'
     accounts.AUTH_PATH = accounts.data_root() / 'accounts.sqlite3'
     password = os.environ.get('MOHENG_REVIEW_PASSWORD', '')
