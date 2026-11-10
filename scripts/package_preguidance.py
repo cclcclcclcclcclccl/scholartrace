@@ -54,7 +54,7 @@ def main():
     }
     for name, source in sources.items():
         shutil.copy2(ROOT / 'artifacts/preguidance-20261110' / source, evidence / name)
-    accepted = ROOT / 'artifacts/preguidance-20261110/cloud-evidence-accepted'
+    accepted = ROOT / 'artifacts/preguidance-20261110/cloud-evidence-accepted-final'
     cloud_result = json.loads((accepted / 'docker-evidence/docker-check.json').read_text(encoding='utf-8'))
     external_result = json.loads((accepted / 'independent-network-evidence/external-check.json').read_text(encoding='utf-8'))
     assert cloud_result['passed'] and external_result['passed']
@@ -62,11 +62,12 @@ def main():
         for p in (accepted / folder).iterdir():
             shutil.copy2(p, evidence / p.name)
     shutil.copy2(ROOT / 'artifacts/preguidance-20261110/docker-final-failure.log', evidence / '修复前同步问答超时_保留记录.txt')
+    shutil.copy2(ROOT / 'artifacts/preguidance-20261110/docker-latest-failure.log', evidence / '修复前无持久卷权限错误_保留记录.txt')
     result = {'created_date': '2026-11-10', 'cloud_deployed': False,
               'docker_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42769900330',
               'prior_failed_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42771811298',
               'prior_failure': 'Synchronous answer exceeded 240-second request budget on slow CPU; retained as evidence',
-              'final_background_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42774358889',
+              'final_background_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42855584748',
               'archive': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
               'source_files': len(files), 'bytes': archive.stat().st_size,
               'private_file': '04_仅本人查看_云端密钥.txt',
@@ -74,6 +75,7 @@ def main():
               'backend_tests_passed': 439, 'npm_known_vulnerabilities': 0,
               'cloud_job_acceptance_seconds': cloud_result['job_acceptance_seconds'],
               'cloud_answer_seconds': cloud_result['answer_seconds'],
+              'cloud_data_fallback_verified': True,
               'pending': ['Owner ModelScope account and real-name verification', 'Deploy and validate stable cloud instance', 'Update stable judge entry only after cloud acceptance']}
     (OUT / '05_材料状态与校验.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print('Verified deployment archive:', len(files), 'files,', archive.stat().st_size, 'bytes; private credentials excluded')
