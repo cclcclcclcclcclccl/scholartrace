@@ -9,7 +9,8 @@ import urllib.request
 
 base = 'http://127.0.0.1:7860'
 report = {'network': 'GitHub-hosted Linux runner -> loopback published Docker port',
-          'public_ingress_proven': False, 'checks': [], 'passed': False}
+          'public_ingress_proven': False, 'answer_mode': 'durable background job',
+          'checks': [], 'passed': False}
 
 
 def request(path, body=None, cookie=None):
@@ -54,13 +55,33 @@ try:
         candidates = json.load(response)
     assert any(d['semantic_status'] == 'ready' and d['recommended_version_id'] for d in candidates)
     report['checks'].append('real_vector_duplicate_detection')
-    with request('/api/ask', {'question': 'What GPUs were used to train the Transformer?', 'document_ids': [paper['id']]}, cookie=cookie) as response:
-        answer = json.load(response)
-    assert answer.get('model_answer')
-    assert 'P100' in json.dumps(answer['model_answer'], ensure_ascii=False), 'GPU answer missed the source hardware'
+    started = time.monotonic()
+    with request('/api/jobs', {'kind': 'ask', 'payload': {'question': 'What GPUs were used to train the Transformer?', 'document_ids': [paper['id']]}}, cookie=cookie) as response:
+        job = json.load(response)
+    report['job_acceptance_seconds'] = round(time.monotonic() - started, 3)
+    assert report['job_acceptance_seconds'] < 15
+    assert job.get('id')
+    while time.monotonic() - started < 900:
+        with request('/api/jobs/' + job['id'], cookie=cookie) as response:
+            state = json.load(response)
+        if state['state'] == 'completed':
+            break
+        if state['state'] in {'failed', 'cancelled', 'interrupted'}:
+            raise AssertionError('Background task did not complete: ' + state['state'])
+        time.sleep(5)
+    else:
+        raise AssertionError('Background answer exceeded 15 minute acceptance budget')
+    with request('/api/jobs/' + job['id'] + '/answer-parts', cookie=cookie) as response:
+        parts = json.load(response)
+    assert len(parts) == 1
+    answer = parts[0]
+    report['answer_seconds'] = round(time.monotonic() - started, 3)
+    assert answer.get('claims')
+    assert 'P100' in json.dumps(answer['claims'], ensure_ascii=False), 'GPU answer missed the source hardware'
     assert answer.get('evidence') and all(e['document_id'] == paper['id'] for e in answer['evidence'])
     report['answer'] = answer
     report['checks'].append('real_scoped_model_answer')
+    report['checks'].append('background_job_accepted_quickly_and_result_persisted')
     report['checks'].append('source_gpu_answer_contains_P100')
     report['passed'] = True
 finally:

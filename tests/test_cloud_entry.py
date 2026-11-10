@@ -25,3 +25,11 @@ def test_cloud_bootstrap_hashes_password_and_is_idempotent(tmp_path, monkeypatch
         assert rows[0]['password'] != 'only-a-test-password-12345'
     assert accounts.path(first).exists()
     assert not (tmp_path / 'data/scholartrace.sqlite3').exists()
+
+
+@pytest.mark.parametrize('setting,expected', [('1', True), ('0', False)])
+def test_health_advertises_background_dispatch(monkeypatch, setting, expected):
+    import asyncio
+    from backend.app import health
+    monkeypatch.setenv('SCHOLARTRACE_CLOUD', setting)
+    assert asyncio.run(health()).get('background_answers_recommended') is expected

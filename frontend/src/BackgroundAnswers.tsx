@@ -27,12 +27,16 @@ export function BackgroundAnswers({
   projectId,
   disabled,
   onLocate,
+  externalJobId,
+  cloudMode = false,
 }: {
   question: string;
   ids: string[];
   projectId?: string;
   disabled: boolean;
   onLocate: (a: Anchor) => void;
+  externalJobId?: string;
+  cloudMode?: boolean;
 }) {
   const [chosen, setChosen] = useState("");
   const [parts, setParts] = useState<Part[]>([]);
@@ -45,6 +49,12 @@ export function BackgroundAnswers({
   const items = history.items;
   const [pollError, setPollError] = useState("");
   const ticket = useRef(0);
+  useEffect(() => {
+    if (externalJobId) {
+      choose(externalJobId);
+      setOpen(true);
+    }
+  }, [externalJobId]);
   useEffect(() => {
     if (!open) return;
     let live = true;
@@ -141,8 +151,9 @@ export function BackgroundAnswers({
         </button>
       </div>
       <p className="result-note">
-        长问题可选择 1—8 篇后后台处理；每篇完成即保存，离开页面不停止。Enter
-        仍为直接问答。
+        {cloudMode
+          ? "云端按篇后台问答：发送后显示进度，每篇完成即保存，离开页面也能找回。普通问题也可能需要几分钟；请选择 1—8 篇。限定原文追问仍直接回应。"
+          : "长问题可选择 1—8 篇后后台处理；每篇完成即保存，离开页面不停止。Enter 仍为直接问答。"}
       </p>
       {(pollError || history.error) && (
         <p className="work-error" role="alert">

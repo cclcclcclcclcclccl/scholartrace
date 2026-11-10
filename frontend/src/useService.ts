@@ -4,6 +4,7 @@ type Status = "checking" | "online" | "offline";
 export function useService() {
   const [status, setStatus] = useState<Status>("checking");
   const [modelReady, setModelReady] = useState(false);
+  const [backgroundRecommended, setBackgroundRecommended] = useState(false);
   const [reconnects, setReconnects] = useState(0);
   const current = useRef<Status>("checking");
   const mounted = useRef(true);
@@ -24,6 +25,7 @@ export function useService() {
       current.current = "online";
       setStatus("online");
       setModelReady(value.model_available);
+      setBackgroundRecommended(value.background_answers_recommended === true);
     } catch {
       if (mounted.current) {
         current.current = "offline";
@@ -45,5 +47,5 @@ export function useService() {
       window.removeEventListener("focus", check);
     };
   }, [check]);
-  return { status, modelReady, reconnects, check };
+  return { status, modelReady, backgroundRecommended, reconnects, check };
 }

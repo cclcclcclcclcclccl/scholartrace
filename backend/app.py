@@ -130,6 +130,7 @@ async def health():
         "status": "ok",
         "service": "scholartrace",
         "model_available": available,
+        "background_answers_recommended": os.getenv("SCHOLARTRACE_CLOUD", "0") == "1",
         "model_url": MODEL_URL,
         "retrieval": "BM25 + multilingual MiniLM + reciprocal rank fusion",
         "version": "0.2.0",

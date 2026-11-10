@@ -213,9 +213,11 @@ function App() {
   const {
     status: serviceStatus,
     modelReady,
+    backgroundRecommended,
     reconnects,
     check: checkService,
   } = useService();
+  const [backgroundJobId, setBackgroundJobId] = useState("");
   const activeRequest = useRef<AbortController | null>(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -477,6 +479,19 @@ function App() {
           ? [...scopeIds]
           : [selected.id];
     try {
+      if (backgroundRecommended && !pinnedBlock) {
+        if (!requestedIds.length || requestedIds.length > 8) {
+          throw new Error("云端后台问答需要明确选择 1—8 篇文献，请切换到当前论文或选择多篇。");
+        }
+        const job = await api<{ id: string }>("/api/jobs", {
+          kind: "ask",
+          payload: { question: value, document_ids: requestedIds, project_id: projectContext?.id },
+        }, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]));
+        if (activeRequest.current !== controller) return;
+        setBackgroundJobId(job.id);
+        setToast("已转入后台处理，进度和结果在下方；离开页面后可从后台问答找回。");
+        return;
+      }
       const result = await api<Answer>(
         "/api/ask",
         {
@@ -1292,6 +1307,8 @@ function App() {
                 </p>
                 {!pinnedBlock && !pinLoading && (
                   <BackgroundAnswers
+                    externalJobId={backgroundJobId}
+                    cloudMode={backgroundRecommended}
                     question={question}
                     ids={
                       scope === "all"

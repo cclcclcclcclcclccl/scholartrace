@@ -38,6 +38,7 @@ def main():
     # Always use authenticated mode in a publicly reachable review container.
     os.environ['SCHOLARTRACE_PUBLIC'] = '1'
     os.environ['SCHOLARTRACE_REGISTRATION'] = '0'
+    os.environ['SCHOLARTRACE_CLOUD'] = '1'
     os.environ['SCHOLARTRACE_MODEL_URL'] = 'http://127.0.0.1:8081/v1'
     bootstrap()
     env = os.environ.copy()
