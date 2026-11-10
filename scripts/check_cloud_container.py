@@ -57,9 +57,11 @@ try:
     with request('/api/ask', {'question': 'What GPUs were used to train the Transformer?', 'document_ids': [paper['id']]}, cookie=cookie) as response:
         answer = json.load(response)
     assert answer.get('model_answer')
+    assert 'P100' in json.dumps(answer['model_answer'], ensure_ascii=False), 'GPU answer missed the source hardware'
     assert answer.get('evidence') and all(e['document_id'] == paper['id'] for e in answer['evidence'])
     report['answer'] = answer
     report['checks'].append('real_scoped_model_answer')
+    report['checks'].append('source_gpu_answer_contains_P100')
     report['passed'] = True
 finally:
     Path('docker-check.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

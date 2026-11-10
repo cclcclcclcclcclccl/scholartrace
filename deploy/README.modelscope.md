@@ -1,0 +1,30 @@
+---
+license: apache-2.0
+sdk: docker
+app_port: 7860
+---
+
+# 墨衡 Moheng · 科研证据与版本复核
+
+本实例包含 FastAPI、React、Qwen3-4B GGUF CPU 推理、MiniLM 多语言正文向量、PDF 原文阅读和证据复核。云端容器独立运行，不连接作者个人电脑，也不调用收费模型 API。
+
+## 上线设置
+
+1. 选择 Docker 和 **platform/2v-cpu-16g-mem 免费 CPU**；不要选择付费资源。
+2. 在空间设置的环境变量中添加秘密变量 `MOHENG_REVIEW_PASSWORD`，值使用你自己生成的 16—200 字符评审专用密码。不要把密码写入仓库、README 或部署 JSON。登录名固定为 `reviewer`。
+3. 上传本目录全部文件，根目录必须直接包含 Dockerfile、README.md、ms_deploy.json、backend、frontend、scripts 和 deploy。
+4. 上线。首次构建会下载并校验约数 GB 的公开模型；服务端口固定 7860。若模型或论文哈希不符，构建应当失败，不绕过校验。
+5. 等运行日志显示模型已加载，再检查 `/api/health` 的 `model_available` 为 true。首页能打开不等于模型已可用。
+6. 在新浏览器窗口登录 reviewer，问 Attention Is All You Need v1 “训练用了哪些 GPU？”，检查引用原文，再用手机移动网络复测。
+
+## 数据与资源边界
+
+- 默认预置 Transformer 的 v1/v7 两篇公开来源论文，方便复核版本；可以登录后导入其他论文。
+- 2 核 CPU 的模型速度与个人电脑不同，请等待生成完成；单请求最多等待 150 秒，复杂问题可能超时。本配置没有常驻 SLA，平台排队、重启或政策变化仍可能影响访问。
+- 本部署默认将研究数据写在容器内部，容器重建后可能丢失；它是评审演示实例，不能作为私人研究资料的唯一副本。重要笔记和成果应导出保存。重建后使用同一秘密变量恢复 reviewer 账号和预置论文，但旧会话需重新登录。
+- 注册接口默认关闭。请通过比赛要求的私密渠道提供评审账号，不要在公开介绍页面发布密码。
+- Docker 云端构建和模型验收记录见项目预指导改进说明；成功构建不代表当前空间已部署。空间实际可用性应在上线后另行验收。
+
+## 第三方资源
+
+Qwen3-4B 基础模型由 Qwen 发布，MiniLM 多语言向量来自 sentence-transformers，公式识别来自 RapidAI/RapidLaTeXOCR。下载来源与 SHA-256 位于 `deploy/assets.json`。软件依赖使用锁文件；论文原文版权属于各自权利人。应用输出需要结合引用原文复核。
