@@ -46,16 +46,19 @@ def main():
     evidence.mkdir(exist_ok=True)
     sources = {
         '官方PDF三类用例.json': 'official-final/report.json',
-        '后端429项测试.txt': 'pytest.log',
+        '后端431项测试.txt': 'pytest-final.log',
         '正文语义界面检查.json': 'ui/browser.json',
         '公网登录与问答检查.json': 'public-browser.json',
         '前端依赖扫描.json': 'npm-audit-final.json',
+        '云端回车转后台浏览器检查.json': 'cloud-dispatch.json',
     }
     for name, source in sources.items():
         shutil.copy2(ROOT / 'artifacts/preguidance-20261110' / source, evidence / name)
     result = {'created_date': '2026-11-10', 'cloud_deployed': False,
               'docker_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42769900330',
-              'final_dependency_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42771811298',
+              'prior_failed_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42771811298',
+              'prior_failure': 'Synchronous answer exceeded 240-second request budget on slow CPU; retained as evidence',
+              'final_background_run': 'https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42774358889',
               'archive': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
               'source_files': len(files), 'bytes': archive.stat().st_size,
               'private_file': '04_仅本人查看_云端密钥.txt',
