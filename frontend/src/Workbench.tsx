@@ -319,7 +319,13 @@ function Library({
   const [duplicates, setDuplicates] = useState<
     (Paper & {
       content_cosine: number;
-      semantic_title_similarity: number;
+      semantic_title_similarity: number | null;
+      semantic_content_cosine?: number | null;
+      semantic_status?: string;
+      semantic_notice?: string;
+      identifier_conflict?: boolean;
+      semantic_sample?: { first_used: number; first_total: number; second_used: number; second_total: number };
+      semantic_evidence?: { first_page: number; second_page: number; first_quote: string; second_quote: string; cosine: number }[];
       match_status: string;
       recommended_version_id?: string;
     })[]
@@ -515,12 +521,23 @@ function Library({
                       <span>
                         {" "}
                         {p.match_status} · 标题语义{" "}
-                        {(p.semantic_title_similarity * 100).toFixed(1)}% ·
+                        {p.semantic_title_similarity == null ? "未计算" : `${(p.semantic_title_similarity * 100).toFixed(1)}%`} ·
+                        正文向量 {p.semantic_content_cosine == null ? (p.semantic_status === "needs_text" ? "需先提取文字或 OCR" : "未就绪") : `${(p.semantic_content_cosine * 100).toFixed(1)}%`} ·
                         内容词频 {(p.content_cosine * 100).toFixed(1)}%{" "}
                         {p.recommended_version_id === p.id
                           ? "· 版本号较新"
                           : ""}
                       </span>
+                      {p.identifier_conflict && <p>论文编号不同：仅作为相关文献候选，不建议按同文版本归档。</p>}
+                      <details>
+                        <summary>如何判断重复？查看正文匹配证据</summary>
+                        <p>{p.semantic_notice || "相似分数仅供人工核对，不自动合并或删除。"}</p>
+                        {p.semantic_sample && <p>正文取样：当前论文 {p.semantic_sample.first_used}/{p.semantic_sample.first_total} 段，候选论文 {p.semantic_sample.second_used}/{p.semantic_sample.second_total} 段。标题相近不足以证明重复；请同时核对编号、正文和版本差异。</p>}
+                        {p.semantic_evidence?.map((e, i) => <div key={i}>
+                          <strong>当前 PDF 第 {e.first_page} 页 ↔ 候选 PDF 第 {e.second_page} 页 · {(e.cosine * 100).toFixed(1)}%</strong>
+                          <blockquote>{e.first_quote}</blockquote><blockquote>{e.second_quote}</blockquote>
+                        </div>)}
+                      </details>
                       <button
                         disabled={busy}
                         onClick={() =>

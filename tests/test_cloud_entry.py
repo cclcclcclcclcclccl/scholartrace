@@ -1,0 +1,27 @@
+import pytest
+from backend import accounts, store
+from scripts.cloud_entry import bootstrap
+
+
+def test_cloud_bootstrap_requires_secret_before_creating_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, 'ROOT', tmp_path)
+    monkeypatch.setattr(accounts, 'AUTH_PATH', tmp_path / 'data/accounts.sqlite3')
+    monkeypatch.delenv('MOHENG_REVIEW_PASSWORD', raising=False)
+    with pytest.raises(ValueError, match='MOHENG_REVIEW_PASSWORD'):
+        bootstrap()
+    assert not (tmp_path / 'data').exists()
+
+
+def test_cloud_bootstrap_hashes_password_and_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, 'ROOT', tmp_path)
+    monkeypatch.setattr(accounts, 'AUTH_PATH', tmp_path / 'data/accounts.sqlite3')
+    monkeypatch.setenv('MOHENG_REVIEW_PASSWORD', 'only-a-test-password-12345')
+    first = bootstrap()
+    second = bootstrap()
+    assert first == second
+    with accounts.connect() as c:
+        rows = c.execute('SELECT * FROM users').fetchall()
+        assert len(rows) == 1
+        assert rows[0]['password'] != 'only-a-test-password-12345'
+    assert accounts.path(first).exists()
+    assert not (tmp_path / 'data/scholartrace.sqlite3').exists()

@@ -1,0 +1,42 @@
+name: Preguidance Docker and external availability evidence
+on:
+  push:
+    branches: [codex/preguidance-20261110]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-network:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/check_public_ingress.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-network-evidence
+          path: external-check.json
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the standalone CPU review image
+        run: docker build -f Dockerfile.cloud -t moheng-review . 2>&1 | tee docker-build.log
+      - name: Exercise authenticated application and real model in container
+        run: |
+          export MOHENG_REVIEW_PASSWORD="$(openssl rand -hex 24)"
+          docker run -d --name moheng -p 127.0.0.1:7860:7860 -e MOHENG_REVIEW_PASSWORD moheng-review
+          python scripts/check_cloud_container.py
+      - name: Collect logs
+        if: always()
+        run: docker logs moheng > docker-runtime.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-evidence
+          path: |
+            docker-build.log
+            docker-runtime.log
+            docker-check.json
