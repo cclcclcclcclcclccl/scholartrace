@@ -388,21 +388,22 @@ def duplicates(identifier: str):
     for doc in docs:
         if doc["id"] == identifier:
             continue
+        comparison = store.content_similarity(identifier, doc["id"])
         same = (
             target["arxiv_id"] and target["arxiv_id"] == doc["arxiv_id"]
         ) or research.normalized_title(target["title"]) == research.normalized_title(
             doc["title"]
         )
-        if same or similarities.get(doc["id"], 0) >= 0.87:
+        if same or comparison["review_candidate"] or similarities.get(doc["id"], 0) >= 0.87:
             candidates.append(
                 {
                     **doc,
-                    **store.content_similarity(identifier, doc["id"]),
+                    **comparison,
                     "semantic_title_similarity": round(
-                        similarities.get(doc["id"], 0), 5
-                    ),
+                        similarities[doc["id"]], 5
+                    ) if doc["id"] in similarities else None,
                     "match_status": "同文版本候选"
-                    if same
+                    if comparison["likely_same_paper"]
                     else "语义相近，需人工确认是否同一论文",
                 }
             )

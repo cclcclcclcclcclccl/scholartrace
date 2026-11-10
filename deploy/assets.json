@@ -1,0 +1,87 @@
+[
+  {
+    "target": "models/multilingual-minilm/model_quint8_avx2.onnx",
+    "sha256": "98a01d88b7de996cdea58c32ca71208c09968d143798814b2ea09d3439dc334f",
+    "urls": [
+      "https://modelscope.cn/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/3d26be06a662164d54f7ffe720321c69d67b3766/onnx/model_quint8_avx2.onnx"
+    ]
+  },
+  {
+    "target": "models/multilingual-minilm/tokenizer.json",
+    "sha256": "2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8",
+    "urls": [
+      "https://modelscope.cn/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/3d26be06a662164d54f7ffe720321c69d67b3766/tokenizer.json"
+    ]
+  },
+  {
+    "target": "models/multilingual-minilm/tokenizer_config.json",
+    "sha256": "5036ea374ffedd706e3bef33e2e0d6953cb868ef8a490e76e32ba0faa37a6b9b",
+    "urls": [
+      "https://modelscope.cn/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/5f5b1cee6aeb8bd07d715a425dbe588f6c29d7df/tokenizer_config.json"
+    ]
+  },
+  {
+    "target": "models/multilingual-minilm/config.json",
+    "sha256": "6300193cb75e01cf80c96decef7187dfb33094d97cc1490b7ead6ff134476e4e",
+    "urls": [
+      "https://modelscope.cn/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/3d26be06a662164d54f7ffe720321c69d67b3766/config.json"
+    ]
+  },
+  {
+    "target": "models/multilingual-minilm/README.md",
+    "sha256": "1e98ea05b0de579fcaad3d625b62ea55647142ed674d5f5ebf1440e4bbbb6f23",
+    "urls": [
+      "https://modelscope.cn/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/6ac632f8a24b5dd9762945efdd2c6756319165b7/README.md"
+    ]
+  },
+  {
+    "target": "models/formula/image_resizer.onnx",
+    "sha256": "e0b075c39700f64d50400f39c8fc186bbb3b5d84d31864008313f376603aca9d",
+    "urls": [
+      "https://github.com/RapidAI/RapidLaTeXOCR/releases/download/v0.0.0/image_resizer.onnx"
+    ]
+  },
+  {
+    "target": "models/formula/encoder.onnx",
+    "sha256": "01bf5dc25539ca0cd5b1bd29296ea495977a6ba5f629dc4178277809d26e5e7d",
+    "urls": [
+      "https://github.com/RapidAI/RapidLaTeXOCR/releases/download/v0.0.0/encoder.onnx"
+    ]
+  },
+  {
+    "target": "models/formula/decoder.onnx",
+    "sha256": "bd695497bf1b22279b7626f5916c79226e1e244c84355f8da7edfd2d921d0072",
+    "urls": [
+      "https://github.com/RapidAI/RapidLaTeXOCR/releases/download/v0.0.0/decoder.onnx"
+    ]
+  },
+  {
+    "target": "models/formula/tokenizer.json",
+    "sha256": "1dc27b18d6a518d0d5ff3f4bb7bd98521fe80ad39e5b2a246d4109f1bb9d5019",
+    "urls": [
+      "https://github.com/RapidAI/RapidLaTeXOCR/releases/download/v0.0.0/tokenizer.json"
+    ]
+  },
+  {
+    "target": "models/Qwen3-4B-Q4_K_M.gguf",
+    "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "urls": [
+      "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+      "https://modelscope.cn/models/Qwen/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q4_K_M.gguf"
+    ]
+  },
+  {
+    "target": "seed-papers/1706.03762v1.pdf",
+    "sha256": "0a9bff1be3575cf9fe26a4a3d3a9175bc791ecec90de8b9deba4cff75d2b9476",
+    "urls": [
+      "https://arxiv.org/pdf/1706.03762v1"
+    ]
+  },
+  {
+    "target": "seed-papers/1706.03762v7.pdf",
+    "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+    "urls": [
+      "https://arxiv.org/pdf/1706.03762v7"
+    ]
+  }
+]

@@ -427,7 +427,13 @@ def content_similarity(first_id: str, second_id: str) -> dict:
         first["arxiv_id"] and first["arxiv_id"] == second["arxiv_id"]
     )
     same_title = normalize(first["title"]).lower() == normalize(second["title"]).lower()
-    likely_same = score > 0.85 and (same_identifier or same_title)
+    from . import semantic_dedup
+
+    semantic = semantic_dedup.compare(first_id, second_id)
+    semantic_score = semantic["semantic_content_cosine"]
+    conflict = bool(first["arxiv_id"] and second["arxiv_id"] and not same_identifier)
+    body_matches = (semantic_score is not None and semantic_score >= semantic_dedup.VERSION_THRESHOLD) or score > 0.85
+    likely_same = bool(body_matches and (same_identifier or same_title) and not conflict)
     newer = None
     if (
         likely_same
@@ -445,5 +451,10 @@ def content_similarity(first_id: str, second_id: str) -> dict:
         "same_title": same_title,
         "likely_same_paper": likely_same,
         "recommended_version_id": newer,
-        "method": "Content word-frequency cosine plus in-document identifier/title; lexical baseline, not embedding semantics",
+        "identifier_conflict": conflict,
+        "review_candidate": bool(same_identifier or same_title or (
+            semantic_score is not None and semantic_score >= semantic_dedup.CANDIDATE_THRESHOLD
+        )),
+        **semantic,
+        "method": "Multilingual MiniLM body chunk vectors with bidirectional alignment; word-frequency cosine retained as separate baseline; identifiers guard version recommendations",
     }

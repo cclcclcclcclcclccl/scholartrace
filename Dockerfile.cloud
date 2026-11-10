@@ -1,0 +1,31 @@
+# Self-contained Linux CPU review host. No paid API and no author's PC dependency.
+FROM node:24-bookworm-slim AS frontend
+WORKDIR /build
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM debian:bookworm-slim AS llama
+RUN apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch b11552 https://github.com/ggml-org/llama.cpp /src
+RUN cmake -S /src -B /src/build -DLLAMA_CURL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON && cmake --build /src/build --target llama-server -j 2
+
+FROM python:3.12-slim-bookworm
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 MPLCONFIGDIR=/tmp/matplotlib LD_LIBRARY_PATH=/opt/llama PORT=7860
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libgl1 libglib2.0-0 fonts-noto-cjk ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements-lock.txt requirements-formula-lock.txt ./
+RUN pip install --no-cache-dir -r requirements-lock.txt
+COPY scripts/formula_worker.py scripts/cloud_entry.py scripts/cloud_assets.py ./scripts/
+RUN python -m venv tools/formula-env && tools/formula-env/bin/pip install --no-cache-dir -r requirements-formula-lock.txt
+COPY deploy/assets.json ./deploy/assets.json
+RUN python scripts/cloud_assets.py
+COPY backend/ ./backend/
+COPY --from=frontend /build/dist ./frontend/dist/
+COPY --from=llama /src/build/bin/ /opt/llama/
+RUN useradd -m -u 1000 moheng && mkdir -p data && chown -R moheng:moheng /app
+USER moheng
+EXPOSE 7860
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 CMD python -c "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:7860/api/health',timeout=3))['model_available']"
+CMD ["python", "scripts/cloud_entry.py"]
