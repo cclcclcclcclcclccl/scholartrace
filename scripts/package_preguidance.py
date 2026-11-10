@@ -71,7 +71,7 @@ def main():
               'source_files': len(files), 'bytes': archive.stat().st_size,
               'private_file': '04_仅本人查看_云端密钥.txt',
               'docker_validation_passed': True, 'independent_network_validation_passed': True,
-              'backend_tests_passed': 431, 'npm_known_vulnerabilities': 0,
+              'backend_tests_passed': 437, 'npm_known_vulnerabilities': 0,
               'cloud_job_acceptance_seconds': cloud_result['job_acceptance_seconds'],
               'cloud_answer_seconds': cloud_result['answer_seconds'],
               'pending': ['Owner ModelScope account and real-name verification', 'Deploy and validate stable cloud instance', 'Update stable judge entry only after cloud acceptance']}

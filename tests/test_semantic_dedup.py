@@ -57,3 +57,51 @@ def test_empty_scans_require_ocr_and_cannot_be_recommended(library, monkeypatch)
     assert not result['likely_same_paper']
     assert result['recommended_version_id'] is None
 
+
+def test_missing_titles_do_not_count_as_identity(library, monkeypatch):
+    library('a', '', 'The same generic introduction about learning and models.')
+    library('b', '  ', 'The same generic introduction about learning and models.')
+    monkeypatch.setattr(retrieval, 'available', lambda: True)
+    monkeypatch.setattr(retrieval, 'embed', vectors)
+    result = store.content_similarity('a', 'b')
+    assert result['same_title'] is False
+    assert result['likely_same_paper'] is False
+    assert result['review_candidate'] is True
+
+
+def test_corrupt_onnx_keeps_identifier_candidate_and_reports_failure(library, monkeypatch):
+    from onnxruntime.capi.onnxruntime_pybind11_state import InvalidProtobuf
+    from backend.features import duplicates
+    library('a', 'Architecture', 'A sufficiently long paragraph about transformer attention.', '1706.03762', 1)
+    library('b', 'Architecture', 'A sufficiently long paragraph about transformer attention.', '1706.03762', 7)
+    monkeypatch.setattr(retrieval, 'available', lambda: True)
+    def broken(_):
+        raise InvalidProtobuf('private-path-and-model-diagnostic')
+    monkeypatch.setattr(retrieval, 'embed', broken)
+    results = duplicates('a')
+    assert len(results) == 1
+    result = results[0]
+    assert result['semantic_status'] == 'error'
+    assert result['semantic_content_cosine'] is None
+    assert result['semantic_title_similarity'] is None
+    assert 'private-path-and-model-diagnostic' not in json.dumps(result)
+    assert 'path' not in result
+
+
+@pytest.mark.parametrize('bad', ['nan', 'zero', 'shape'])
+def test_invalid_vector_output_never_presents_a_semantic_measurement(library, monkeypatch, bad):
+    library('a', 'A', 'A long enough body paragraph about attention and tokens.')
+    library('b', 'B', 'Another body paragraph about sequence learning and models.')
+    monkeypatch.setattr(retrieval, 'available', lambda: True)
+    def invalid(texts):
+        if bad == 'nan':
+            return np.full((len(texts), 2), np.nan)
+        if bad == 'zero':
+            return np.zeros((len(texts), 2))
+        return np.ones((len(texts) + 1, 2))
+    monkeypatch.setattr(retrieval, 'embed', invalid)
+    result = store.content_similarity('a', 'b')
+    assert result['semantic_status'] == 'error'
+    assert result['semantic_content_cosine'] is None
+    assert result['semantic_evidence'] == []
+

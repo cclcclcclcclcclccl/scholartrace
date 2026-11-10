@@ -33,3 +33,10 @@ def test_health_advertises_background_dispatch(monkeypatch, setting, expected):
     from backend.app import health
     monkeypatch.setenv('SCHOLARTRACE_CLOUD', setting)
     assert asyncio.run(health()).get('background_answers_recommended') is expected
+
+
+def test_cloud_data_root_is_a_persistent_volume_when_configured(tmp_path, monkeypatch):
+    from backend import accounts
+    monkeypatch.setenv('SCHOLARTRACE_DATA_DIR', str(tmp_path / 'persistent'))
+    assert accounts.data_root() == tmp_path / 'persistent'
+    assert accounts.path('reviewer') == tmp_path / 'persistent' / 'accounts' / 'reviewer' / 'library.sqlite3'

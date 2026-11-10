@@ -14,6 +14,10 @@ sys.path.insert(0, str(ROOT))
 
 def bootstrap():
     from backend import accounts, database, store
+    data_dir = os.environ.get('SCHOLARTRACE_DATA_DIR', '/mnt/workspace/moheng-data')
+    os.environ['SCHOLARTRACE_DATA_DIR'] = data_dir
+    store.DB_PATH = Path(data_dir) / 'scholartrace.sqlite3'
+    accounts.AUTH_PATH = accounts.data_root() / 'accounts.sqlite3'
     password = os.environ.get('MOHENG_REVIEW_PASSWORD', '')
     if not 16 <= len(password) <= 200:
         raise ValueError('MOHENG_REVIEW_PASSWORD must contain 16 to 200 characters; configure a platform secret')
