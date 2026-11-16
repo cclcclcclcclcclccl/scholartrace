@@ -12,7 +12,7 @@ report = {'checked_at': datetime.now(timezone.utc).isoformat(),
 
 
 def fetch(url):
-    return urllib.request.urlopen(url, timeout=40)
+    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'}), timeout=40)
 
 
 try:
