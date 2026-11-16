@@ -8,22 +8,29 @@
 
 - [项目与评审入口](https://cclcclcclcclcclccl.github.io/scholartrace/)
 - [源码仓库](https://github.com/cclcclcclcclcclccl/scholartrace)
-- [最终版材料下载](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/moheng-handoff-20261022)
+- [历史基线材料](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/moheng-handoff-20261025)
 - [最终轮对标、修改与验收](docs/墨衡_最终轮对标与验收_2026-10-21.md)
 - [逐步使用教程](docs/评审使用指南_2026-10-21.md)
 - [需求验收矩阵](docs/需求验收矩阵.md) 与 [历轮原始开发记录](docs/开发历史与历轮验收.md)
 
-在线入口页为静态导航；完整应用通过独立评审服务运行。免费隧道和本机模型依赖主机开机联网，无长期可用性保证。评审账号另附于提交材料，不公开密码。链接的实际发布、连通及最终提交状态见随包清单。
+在线入口页为静态导航；完整应用与模型已迁移到魔搭免费云端，不依赖作者电脑开机。平台休眠、维护与政策变化仍可能影响访问，不承诺长期可用率。评审账号通过赛事私密材料提供。
 
-## 2026-10-22交付补充
+## 2026-11-16 云端评审修订
 
-本轮同步公网恢复与提交材料，科研功能和演示保留2026-10-21基线。新增当前用户登录启动与健康检查；尚未完成独立网络或24/72小时可用性证明。
+- [固定评审入口](https://cclcclcclcclcclccl.github.io/scholartrace/workbench.html)；[魔搭应用](https://cclcclccl-moheng-review.ms.show)；[空间页](https://modelscope.cn/studios/cclcclccl/moheng-review)。
+- 实际免费档位为 2 核 CPU / 8 GB，网站、Qwen 与正文向量模型独立运行。云端普通提问使用后台任务，生成可能需要数分钟。
+- 已适配魔搭反向代理与跨站 iframe：精确公开来源校验，Secure / HttpOnly / Partitioned 会话；当前版 Chrome / Edge 真实登录、论文读取与问答已核验。
+- 本轮完整后端回归 456 项通过；真实浏览器及独立网络证据见 [云端部署修订说明](docs/云端部署修订说明_2026-11-16.md)。工程用例不等于总体问答准确率或长期在线保证。
+- [本日补充材料](https://github.com/cclcclcclcclcclccl/scholartrace/releases/tag/moheng-cloud-20261116)。10 月视频与既往 PDF 保留原日期；正式补交由作者按赛事后台允许的入口完成。
 
-- [提交总览与版本边界](docs/提交总览与版本说明_2026-10-22.md)
-- [提交前真实抽查与创新证据](docs/提交前实测与创新证据_2026-10-22.md)
-- [免费评审运行与故障恢复](docs/免费评审运行与故障恢复_2026-10-22.md)
-- [答辩速学与演练](docs/作者答辩速学与演练_2026-10-22.md)
-- [独立网络和同学试用步骤](docs/同学试用与独立网络核验_2026-10-22.md)
+## 2026-11-11 历史修订记录
+
+预指导后的修订版已完成源码、容器、官方 PDF 三类用例和独立网络检查。后端回归为 **439 项通过**，前端构建通过；当时的真实云端问答验收见 [GitHub Actions 运行 42855584748](https://github.com/cclcclcclcclcclccl/scholartrace/actions/runs/42855584748)。这些是工程和验收证据，不是科研问答总体准确率或奖项保证。
+
+- [当前版本状态与交付边界](docs/当前版本状态_2026-11-11.md)
+- [预指导逐条修改说明](docs/预指导修改说明_2026-11-10.md)
+- [提交总览与历史版本边界](docs/提交总览与版本说明_2026-10-22.md)
+- [评审使用指南](docs/评审使用指南_2026-10-21.md)
 
 ## 六大模块
 
@@ -64,7 +71,7 @@ node scripts/start.mjs
 
 打开 http://127.0.0.1:8765/ 。首次下载免费公开模型需要网络和数 GB 磁盘；实际速度取决于本机硬件。若缺少模型，界面会说明降级状态，不伪造生成结果。公式识别为可选安装：`.venv\Scripts\python scripts/install_formula.py`。停止运行：`node scripts/stop.mjs`。
 
-环境变量模板见 `.env.example`；锁定依赖见 `requirements-lock.txt` 和 `frontend/package-lock.json`。守护启动器存在 `.env` 时会读取；亦可设置系统环境变量。不要将含密钥的 `.env` 提交到仓库。更完整的 CPU/Linux/Docker 边界见 [部署与复现](docs/部署与复现.md)。原 `compose.yaml` 尚未在本机实跑；2026-11-10 新增的独立 `Dockerfile.cloud` 已在 GitHub Linux 云端完成真实构建、模型启动和登录问答验收，见[预指导修改说明](docs/预指导修改说明_2026-11-10.md)。长期云端实例仍需账号部署，不能将 CI 测试机器视为托管网站。
+环境变量模板见 `.env.example`；锁定依赖见 `requirements-lock.txt` 和 `frontend/package-lock.json`。守护启动器存在 `.env` 时会读取；亦可设置系统环境变量。不要将含密钥的 `.env` 提交到仓库。更完整的 CPU/Linux/Docker 边界见 [部署与复现](docs/部署与复现.md)。原 `compose.yaml` 尚未在本机实跑；2026-11-10 新增的独立 `Dockerfile.cloud` 已在 GitHub Linux 云端完成真实构建、模型启动和登录问答验收，见[预指导修改说明](docs/预指导修改说明_2026-11-10.md)。本项目已于2026-11-16部署到实际魔搭空间；CI测试机器仅用于验证。
 
 ## 验证与复现
 
@@ -75,7 +82,7 @@ npm --prefix frontend run build
 
 真实论文集成测试需准备[官方PDF资料](docs/测试资料准备.md)；缺资料会明确跳过，不计为通过。
 
-2026-10-21 产品后端完整回归为 **420 项通过**；前端类型检查与构建通过。测试数量不是科研正确率。最新选段开发检查包含 4 个已暴露问题、11 次真实模型调用：聚焦问题有据，复杂原题仍漏答，语言仍有重复或中英混杂。详见 [限定原文追问验收](docs/限定原文追问与验收_2026-10-21.md)。原始结果、失败和历轮哈希保留在本地独立证据包中，不覆盖旧版本记录；公开Release提供不含原始论文摘录的验收摘要。
+历史文档中的420项是10月基线、439项是11月11日记录，本轮为456项；三者不能混用。测试数量不是科研正确率。复杂机制、扫描公式表格和专业翻译仍需人工复核；原始结果、失败和历轮哈希保留在本地独立证据包中，不覆盖旧版本记录。
 
 模型权重、论文文件、个人数据库、评审密码和临时运行目录不进入公开仓库。评审实例使用独立账号和资料库。请勿将本机匿名空间直接暴露公网；公开模式设置 `SCHOLARTRACE_PUBLIC=1`、`SCHOLARTRACE_REGISTRATION=0` 并使用 HTTPS。
 
