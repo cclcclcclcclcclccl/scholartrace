@@ -55,6 +55,12 @@ def compare(first, second):
         database = str(store.database_path().resolve())
         av = _vectors(database, first, signature, tuple(c["text"] for c in a))
         bv = _vectors(database, second, signature, tuple(c["text"] for c in b))
+        if av.ndim != 2 or bv.ndim != 2 or av.shape[1] != bv.shape[1] or av.shape[0] != len(a) or bv.shape[0] != len(b):
+            raise ValueError("Invalid embedding shape")
+        if not np.isfinite(av).all() or not np.isfinite(bv).all():
+            raise ValueError("Nonfinite embedding")
+        if np.any(np.linalg.norm(av, axis=1) < 1e-8) or np.any(np.linalg.norm(bv, axis=1) < 1e-8):
+            raise ValueError("Zero embedding")
         matrix = np.clip(av @ bv.T, -1, 1)
         if not np.isfinite(matrix).all():
             raise ValueError("Nonfinite embedding")
@@ -76,6 +82,6 @@ def compare(first, second):
             if len(seen) == 3:
                 break
         result.update(semantic_status="ready", semantic_content_cosine=round(score, 5), semantic_alignment_mean=round(alignment, 5))
-    except (RuntimeError, ValueError, OSError):
+    except Exception:
         result["semantic_status"] = "error"
     return result

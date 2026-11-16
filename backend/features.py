@@ -8,6 +8,7 @@ import uuid
 import zipfile
 from typing import Literal
 
+import numpy as np
 import pymupdf
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -381,10 +382,16 @@ def duplicates(identifier: str):
     docs = store.list_documents()
     similarities = {}
     if retrieval.available() and docs:
-        vectors = retrieval.embed([target["title"]] + [d["title"] for d in docs])
-        similarities = {
-            d["id"]: float(vectors[0] @ v) for d, v in zip(docs, vectors[1:])
-        }
+        try:
+            titles = [target["title"]] + [d["title"] for d in docs]
+            vectors = retrieval.embed(titles)
+            if vectors.ndim != 2 or vectors.shape[0] != len(titles) or not np.isfinite(vectors).all():
+                raise ValueError("invalid title embedding")
+            similarities = {
+                d["id"]: float(vectors[0] @ v) for d, v in zip(docs, vectors[1:])
+            }
+        except Exception:
+            similarities = {}
     for doc in docs:
         if doc["id"] == identifier:
             continue

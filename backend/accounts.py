@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 from . import store, database, jobs
 
 PUBLIC = os.getenv("SCHOLARTRACE_PUBLIC", "0") == "1"
-AUTH_PATH = store.ROOT / "data/accounts.sqlite3"
+def data_root():
+    return Path(os.getenv("SCHOLARTRACE_DATA_DIR", store.ROOT / "data"))
+
+
+AUTH_PATH = data_root() / "accounts.sqlite3"
 router = APIRouter(prefix="/api/account")
 schedulers = []
 
@@ -47,7 +51,7 @@ def user(request):
 
 
 def path(identifier):
-    return store.ROOT / "data/accounts" / identifier / "library.sqlite3"
+    return data_root() / "accounts" / identifier / "library.sqlite3"
 
 
 def databases():

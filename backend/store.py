@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import unicodedata
@@ -15,7 +16,8 @@ from pathlib import Path
 import pymupdf
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "data/scholartrace.sqlite3"
+DATA_ROOT = Path(os.getenv("SCHOLARTRACE_DATA_DIR", ROOT / "data"))
+DB_PATH = DATA_ROOT / "scholartrace.sqlite3"
 database_override = ContextVar("scholartrace_database", default=None)
 
 
@@ -426,7 +428,9 @@ def content_similarity(first_id: str, second_id: str) -> dict:
     same_identifier = bool(
         first["arxiv_id"] and first["arxiv_id"] == second["arxiv_id"]
     )
-    same_title = normalize(first["title"]).lower() == normalize(second["title"]).lower()
+    first_title = normalize(first["title"]).lower()
+    second_title = normalize(second["title"]).lower()
+    same_title = bool(first_title and second_title and first_title == second_title)
     from . import semantic_dedup
 
     semantic = semantic_dedup.compare(first_id, second_id)

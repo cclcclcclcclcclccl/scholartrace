@@ -64,7 +64,7 @@ node scripts/start.mjs
 
 打开 http://127.0.0.1:8765/ 。首次下载免费公开模型需要网络和数 GB 磁盘；实际速度取决于本机硬件。若缺少模型，界面会说明降级状态，不伪造生成结果。公式识别为可选安装：`.venv\Scripts\python scripts/install_formula.py`。停止运行：`node scripts/stop.mjs`。
 
-环境变量模板见 `.env.example`；锁定依赖见 `requirements-lock.txt` 和 `frontend/package-lock.json`。守护启动器存在 `.env` 时会读取；亦可设置系统环境变量。不要将含密钥的 `.env` 提交到仓库。更完整的 CPU/Linux/Docker 边界见 [部署与复现](docs/部署与复现.md)。Docker 配置未在本机实跑，不标作已验收。
+环境变量模板见 `.env.example`；锁定依赖见 `requirements-lock.txt` 和 `frontend/package-lock.json`。守护启动器存在 `.env` 时会读取；亦可设置系统环境变量。不要将含密钥的 `.env` 提交到仓库。更完整的 CPU/Linux/Docker 边界见 [部署与复现](docs/部署与复现.md)。原 `compose.yaml` 尚未在本机实跑；2026-11-10 新增的独立 `Dockerfile.cloud` 已在 GitHub Linux 云端完成真实构建、模型启动和登录问答验收，见[预指导修改说明](docs/预指导修改说明_2026-11-10.md)。长期云端实例仍需账号部署，不能将 CI 测试机器视为托管网站。
 
 ## 验证与复现
 
