@@ -1,0 +1,19 @@
+name: ModelScope independent public access check
+on:
+  push:
+    branches: [codex/cloud-hosting-20261116]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-access:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/check_public_ingress.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: modelscope-independent-network-evidence
+          path: external-check.json

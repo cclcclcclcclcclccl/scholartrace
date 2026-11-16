@@ -15,6 +15,12 @@ REPO = "cclcclcclcclcclccl/scholartrace"
 
 
 def main():
+    runtime_file = ROOT / "submission-site/runtime.json"
+    if runtime_file.exists():
+        current = json.loads(runtime_file.read_text(encoding="utf-8-sig"))
+        if current.get("hosting") == "modelscope":
+            print("Cloud reviewer entrance is active; local recovery will not overwrite it.")
+            return
     url = (ROOT / "artifacts/public-review-20261021/url.txt").read_text(encoding="utf-8-sig").strip()
     if not re.fullmatch(r"https://[a-z0-9-]+\.trycloudflare\.com", url):
         raise ValueError("Invalid review endpoint")
