@@ -59,11 +59,45 @@ def databases():
         return [path(r[0]) for r in c.execute("SELECT id FROM users")]
 
 
+def embedded_session():
+    return PUBLIC and os.getenv("SCHOLARTRACE_EMBEDDED", "0") == "1"
+
+
+def valid_write_origin(request):
+    origin = request.headers.get("origin")
+    configured = os.getenv("SCHOLARTRACE_PUBLIC_ORIGIN", "").rstrip("/")
+    if configured:
+        parsed = urlparse(configured)
+        valid = (parsed.scheme == "https" and bool(parsed.hostname)
+                 and not parsed.username and not parsed.password
+                 and not parsed.path and not parsed.query and not parsed.fragment)
+        # The reverse proxy may rewrite Host. Never trust arbitrary forwarded headers.
+        return valid and origin == configured
+    if embedded_session():
+        return False  # Embedded cookies require an explicitly configured public origin.
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    return (parsed.scheme in {"http", "https"} and not parsed.username
+            and not parsed.password and not parsed.path and not parsed.query
+            and not parsed.fragment and parsed.netloc == request.headers.get("host"))
+
+
+def partition_session_cookie(response):
+    # Python 3.12 does not expose Partitioned in SimpleCookie; keep all other flags.
+    if embedded_session():
+        response.raw_headers = [
+            (key, value + b"; Partitioned")
+            if key.lower() == b"set-cookie" and value.startswith(b"scholartrace_session=")
+            else (key, value)
+            for key, value in response.raw_headers
+        ]
+
+
 async def scope(request, call_next):
     if request.url.path.startswith("/api/"):
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
-            origin = request.headers.get("origin")
-            if origin and urlparse(origin).netloc != request.headers.get("host"):
+            if not valid_write_origin(request):
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse({"detail": "来源校验失败"}, 403)
@@ -157,10 +191,11 @@ def create_session(identifier, response):
         "scholartrace_session",
         token,
         httponly=True,
-        samesite="strict",
+        samesite="none" if embedded_session() else "strict",
         secure=PUBLIC,
         max_age=7 * 86400,
     )
+    partition_session_cookie(response)
 
 
 @router.post("/login")
@@ -211,5 +246,7 @@ def logout(request: Request, response: Response):
             "DELETE FROM sessions WHERE token=?",
             (hashlib.sha256(token.encode()).hexdigest(),),
         )
-    response.delete_cookie("scholartrace_session")
+    response.delete_cookie("scholartrace_session", secure=PUBLIC, httponly=True,
+                           samesite="none" if embedded_session() else "strict")
+    partition_session_cookie(response)
     return {"ok": True}

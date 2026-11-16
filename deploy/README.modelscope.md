@@ -28,3 +28,9 @@ app_port: 7860
 ## 第三方资源
 
 Qwen3-4B 基础模型由 Qwen 发布，MiniLM 多语言向量来自 sentence-transformers，公式识别来自 RapidAI/RapidLaTeXOCR。下载来源与 SHA-256 位于 `deploy/assets.json`。软件依赖使用锁文件；论文原文版权属于各自权利人。应用输出需要结合引用原文复核。
+
+## 魔搭代理与嵌入会话
+
+魔搭会将独立域名放在其展示页的 iframe 中，反向代理也可能重写 Host。公开部署须显式配置 `SCHOLARTRACE_PUBLIC_ORIGIN=https://你的空间独立域名.ms.show` 和 `SCHOLARTRACE_EMBEDDED=1`。来源只允许这个精确 HTTPS origin；未配置来源时嵌入模式拒绝写入，不信任任意 X-Forwarded-Host。会话采用 Secure、HttpOnly、SameSite=None、Partitioned；普通本机模式仍为 Strict。建议使用当前版本的 Chrome 或 Edge，并以实际浏览器登录和刷新恢复作为验收依据。
+
+本项目空间为 `https://cclcclccl-moheng-review.ms.show`。`deploy/Dockerfile.modelscope-patch` 复用本空间首次构建的固定摘要镜像，以快速发布登录兼容修复；独立完整构建仍使用 `Dockerfile.cloud`，并通过运行环境传入上述两个参数以及评审密码。完整源代码不依赖下载私人数据库。

@@ -1,0 +1,5 @@
+# Fast patch of our verified first ModelScope build; digest pins the complete base.
+# For a standalone rebuild from public upstream dependencies use Dockerfile.full.
+FROM mshub-registry.cn-zhangjiakou.cr.aliyuncs.com/modelscope-repo/independent-service@sha256:a0e254b8b45b216505fa3220757143369da7bf8f3c63fd66014748cd1820f097
+ENV SCHOLARTRACE_PUBLIC_ORIGIN=https://cclcclccl-moheng-review.ms.show SCHOLARTRACE_EMBEDDED=1
+COPY backend/accounts.py /app/backend/accounts.py
